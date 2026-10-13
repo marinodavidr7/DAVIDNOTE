@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="gradBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#1e3a8a" />
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="100%" stop-color="#eab308" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  
+  <!-- Outer rounded background -->
+  <rect width="512" height="512" rx="110" fill="url(#gradBg)"/>
+  
+  <!-- Subtle inner glow ring -->
+  <rect x="16" y="16" width="480" height="480" rx="98" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="4"/>
+
+  <!-- Store Roof / Canopy -->
+  <g filter="url(#shadow)">
+    <!-- Awning / Canopy -->
+    <path d="M120 180 L392 180 L370 230 L142 230 Z" fill="#ffffff" />
+    <path d="M150 180 L185 180 L175 230 L140 230 Z" fill="#ef4444" />
+    <path d="M220 180 L255 180 L250 230 L215 230 Z" fill="#ef4444" />
+    <path d="M290 180 L325 180 L320 230 L285 230 Z" fill="#ef4444" />
+    <path d="M360 180 L392 180 L370 230 L350 230 Z" fill="#ef4444" />
+
+    <!-- Shopping Cart body -->
+    <path d="M160 250 H340 L315 340 H185 Z" fill="#ffffff" rx="8"/>
+    <path d="M175 265 H325 L305 325 H195 Z" fill="#1e3a8a" opacity="0.12"/>
+    
+    <!-- Letter D for DAVID -->
+    <text x="256" y="322" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="64" text-anchor="middle" fill="#1e40af">D</text>
+    
+    <!-- Cart Wheels -->
+    <circle cx="205" cy="370" r="18" fill="url(#goldGrad)"/>
+    <circle cx="295" cy="370" r="18" fill="url(#goldGrad)"/>
+    <circle cx="205" cy="370" r="8" fill="#1e3a8a"/>
+    <circle cx="295" cy="370" r="8" fill="#1e3a8a"/>
+  </g>
+  
+  <!-- Star / badge -->
+  <g transform="translate(370, 110)">
+    <circle cx="0" cy="0" r="34" fill="url(#goldGrad)" filter="url(#shadow)"/>
+    <path d="M0 -20 L6 -6 L20 -6 L9 4 L14 18 L0 9 L-14 18 L-9 4 L-20 -6 L-6 -6 Z" fill="#854d0e"/>
+  </g>
+  
+  <!-- App text label -->
+  <text x="256" y="440" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="28" letter-spacing="3" text-anchor="middle" fill="#ffffff">COLMADO DAVID</text>
+</svg>

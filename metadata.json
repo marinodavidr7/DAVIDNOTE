@@ -1,0 +1,6 @@
+{
+  "name": "Súper Colmado DAVID",
+  "description": "Sistema de gestión de fiados y clientes para Súper Colmado DAVID con soporte para Google Sheets y generación de APK / PWA móvil.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
