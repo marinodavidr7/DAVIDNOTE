@@ -12,7 +12,8 @@ import {
   RotateCcw,
   CheckCircle2,
   Eye,
-  ShoppingBag
+  ShoppingBag,
+  FileSpreadsheet
 } from 'lucide-react';
 import { DatosColmado } from '../types';
 import { store } from '../services/storeService';
@@ -21,23 +22,29 @@ interface ColmadoSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSaved: (datos: DatosColmado) => void;
+  vistaTablaMovimientos?: boolean;
+  onToggleVistaTabla?: (val: boolean) => void;
 }
 
 export const ColmadoSettingsModal: React.FC<ColmadoSettingsModalProps> = ({
   isOpen,
   onClose,
-  onSaved
+  onSaved,
+  vistaTablaMovimientos = false,
+  onToggleVistaTabla
 }) => {
   const [formData, setFormData] = useState<DatosColmado>(store.getDatosColmado());
   const [tab, setTab] = useState<'formulario' | 'preview'>('formulario');
   const [isSaved, setIsSaved] = useState(false);
+  const [tablaView, setTablaView] = useState(vistaTablaMovimientos);
 
   useEffect(() => {
     if (isOpen) {
       setFormData(store.getDatosColmado());
       setIsSaved(false);
+      setTablaView(vistaTablaMovimientos);
     }
-  }, [isOpen]);
+  }, [isOpen, vistaTablaMovimientos]);
 
   if (!isOpen) return null;
 
@@ -299,6 +306,43 @@ export const ColmadoSettingsModal: React.FC<ColmadoSettingsModalProps> = ({
                     placeholder="Texto que saldrá al final de los recibos de fiado o abono"
                     className="w-full px-3.5 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-white text-xs text-slate-900"
                   />
+                </div>
+
+                {/* Preferencias de Visualización */}
+                <div className="pt-3 border-t border-slate-200">
+                  <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5">
+                        <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                      </div>
+                      <div className="space-y-0.5">
+                        <div className="text-xs font-bold text-slate-800">
+                          Movimientos en Hoja de Cálculo
+                        </div>
+                        <div className="text-[11px] text-slate-500 leading-tight">
+                          Ver los fiados y abonos en tabla cuadriculada estilo Excel / Sheets.
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newVal = !tablaView;
+                        setTablaView(newVal);
+                        localStorage.setItem('colmado_vista_tabla_movimientos', String(newVal));
+                        onToggleVistaTabla?.(newVal);
+                      }}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                        tablaView ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                          tablaView ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
                 </div>
               </div>
             </form>

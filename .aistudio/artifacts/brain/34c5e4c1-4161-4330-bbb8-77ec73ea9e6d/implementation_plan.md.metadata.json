@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for fixing session persistence on refresh, keeping bottom nav visible on audit screen, and fixing mobile layout overlap on client cards.",
+  "updatedAt": "2026-10-13T05:19:46.684651319Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

@@ -16,6 +16,7 @@ export const GoogleSheetsConfigModal: React.FC<GoogleSheetsConfigModalProps> = (
   const [tab, setTab] = useState<'webapp' | 'pegar'>('webapp');
   const [url, setUrl] = useState(store.getWebAppUrl());
   const [syncing, setSyncing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [resultMessage, setResultMessage] = useState<{ success: boolean; message: string } | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [showCode, setShowCode] = useState(false);
@@ -48,6 +49,33 @@ export const GoogleSheetsConfigModal: React.FC<GoogleSheetsConfigModalProps> = (
     } finally {
       setSyncing(false);
       onConfigChanged();
+    }
+  };
+
+  const handleExportAll = async () => {
+    if (!url.trim()) {
+      setResultMessage({ success: false, message: 'Ingresa la URL de tu Web App de Google Apps Script' });
+      return;
+    }
+    setExporting(true);
+    setResultMessage(null);
+    try {
+      store.setWebAppUrl(url.trim());
+      const res = await store.exportarTodosLosDatosAGoogleSheet();
+      setResultMessage({
+        success: res.success,
+        message: res.message
+      });
+      if (res.success) {
+        onConfigChanged();
+      }
+    } catch (err: any) {
+      setResultMessage({
+        success: false,
+        message: err.message || 'Error al exportar a Google Sheets'
+      });
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -128,9 +156,47 @@ function handleApiRequest(action, data) {
       return getHistorialAdmin();
     case 'getGastosDiariosCliente':
       return getGastosDiariosCliente(data.idCliente);
+    case 'exportarDatosMasivos':
+      return exportarDatosMasivos(data);
     default:
       return { success: false, message: 'Acción no reconocida' };
   }
+}
+
+function exportarDatosMasivos(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  var sheetClientes = ss.getSheetByName('Clientes');
+  if (!sheetClientes) sheetClientes = ss.insertSheet('Clientes');
+  sheetClientes.clear();
+  sheetClientes.appendRow(['ID', 'Nombre', 'Telefono', 'PIN', 'Saldo', 'Limite', 'Dias_Pago']);
+  if (data.clientes && Array.isArray(data.clientes)) {
+    data.clientes.forEach(function(c) {
+      sheetClientes.appendRow([c.id, c.nombre, c.telefono, c.pin, c.saldo, c.limite, c.diasPago]);
+    });
+  }
+
+  var sheetMovs = ss.getSheetByName('Movimientos');
+  if (!sheetMovs) sheetMovs = ss.insertSheet('Movimientos');
+  sheetMovs.clear();
+  sheetMovs.appendRow(['ID_Mov', 'ID_Cliente', 'Tipo', 'Monto', 'FechaHora', 'Observaciones', 'Cliente']);
+  if (data.movimientos && Array.isArray(data.movimientos)) {
+    data.movimientos.forEach(function(m) {
+      sheetMovs.appendRow([m.idMov, m.idCliente, m.tipo, m.monto, m.fechaHora, m.observaciones, m.nombreCliente || '']);
+    });
+  }
+
+  var sheetAuts = ss.getSheetByName('Autorizados');
+  if (!sheetAuts) sheetAuts = ss.insertSheet('Autorizados');
+  sheetAuts.clear();
+  sheetAuts.appendRow(['ID', 'ID_Cliente', 'Nombre', 'Parentesco']);
+  if (data.autorizados && Array.isArray(data.autorizados)) {
+    data.autorizados.forEach(function(a) {
+      sheetAuts.appendRow([a.id, a.idCliente, a.nombre, a.parentesco]);
+    });
+  }
+
+  return { success: true, message: 'Datos exportados correctamente' };
 }`;
 
   const copyCode = () => {
@@ -195,8 +261,7 @@ function handleApiRequest(action, data) {
             <div>
               <strong>¿Por qué no eran iguales los datos?</strong>
               <p className="mt-0.5 text-amber-800">
-                Al abrir la app por primera vez, se inicia con datos de prueba de ejemplo (Manuel López, etc.).
-                Para ver los clientes y saldos reales de tu hoja de cálculo, puedes <strong>sincronizar mediante la Web App</strong> o <strong>pegar las filas de tu hoja aquí mismo</strong>.
+                Todos los clientes, deudas y movimientos se sincronizan directamente con tu hoja de cálculo de Google Sheets.
               </p>
             </div>
           </div>
@@ -237,14 +302,22 @@ function handleApiRequest(action, data) {
                 </p>
               </div>
 
-              <div className="flex gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <button
                   onClick={handleSyncWebApp}
-                  disabled={syncing}
-                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition active:scale-98 disabled:opacity-50"
+                  disabled={syncing || exporting}
+                  className="py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition active:scale-98 disabled:opacity-50"
                 >
                   <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-                  {syncing ? 'Sincronizando con Google Sheet...' : 'Sincronizar Datos Reales Ahora'}
+                  {syncing ? 'Sincronizando...' : '📥 Traer de la Hoja'}
+                </button>
+                <button
+                  onClick={handleExportAll}
+                  disabled={syncing || exporting}
+                  className="py-3 bg-teal-700 hover:bg-teal-800 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition active:scale-98 disabled:opacity-50"
+                >
+                  <ArrowRight className={`w-4 h-4 ${exporting ? 'animate-pulse' : ''}`} />
+                  {exporting ? 'Exportando...' : '📤 Enviar a la Hoja'}
                 </button>
               </div>
 

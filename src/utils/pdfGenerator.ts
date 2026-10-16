@@ -507,3 +507,135 @@ export function generarGastosQuincenaPDF(
   doc.save(nombreArchivo);
 }
 
+/**
+ * Genera un reporte PDF con la lista completa de abonos de un cliente para máxima transparencia
+ */
+export function generarReporteAbonosClientePDF(
+  abonos: Movimiento[],
+  opciones: { nombreCliente: string; telefonoCliente?: string }
+): void {
+  const datosColmado = store.getDatosColmado();
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4'
+  });
+
+  const totalAbonado = abonos.reduce((sum, a) => sum + a.monto, 0);
+
+  // Encabezado
+  doc.setFillColor(16, 185, 129); // Verde esmeralda para abonos
+  doc.rect(0, 0, 210, 32, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text(datosColmado.nombre.toUpperCase(), 14, 14);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(236, 253, 245);
+  doc.text(`${datosColmado.slogan} · Tel: ${datosColmado.telefono} · ${datosColmado.direccion}`, 14, 21);
+  doc.text(`HISTORIAL OFICIAL DE ABONOS Y PAGOS RECIBIDOS`, 14, 27);
+
+  // Subtítulo con datos del cliente
+  doc.setTextColor(30, 41, 59);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text(`Cliente: ${opciones.nombreCliente}`, 14, 42);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(100, 116, 139);
+  if (opciones.telefonoCliente) {
+    doc.text(`Teléfono: ${opciones.telefonoCliente}`, 14, 48);
+  }
+  doc.text(`Fecha de emisión: ${new Date().toLocaleDateString('es-DO')} · ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}`, 14, opciones.telefonoCliente ? 54 : 48);
+
+  // Resumen en caja
+  const startBoxY = opciones.telefonoCliente ? 60 : 54;
+  doc.setFillColor(240, 253, 244);
+  doc.setDrawColor(187, 247, 208);
+  doc.roundedRect(14, startBoxY, 182, 16, 2, 2, 'FD');
+
+  doc.setTextColor(22, 101, 52);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text(`Total Pagado: ${formatoMoneda(totalAbonado)}`, 20, startBoxY + 10.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Cantidad de Abonos: ${abonos.length}`, 130, startBoxY + 10.5);
+
+  const startTableY = startBoxY + 22;
+
+  // Filas de la tabla
+  const rows = abonos.map((a, idx) => {
+    const fechaHora = `${a.fechaTexto || a.fechaHora.slice(0, 10)} ${a.hora || ''}`.trim();
+    const obs = a.observaciones || 'Pago recibido';
+    const fiadosTxt = a.fiadosPagadosIds && a.fiadosPagadosIds.length > 0 ? ` (Fiados: #${a.fiadosPagadosIds.join(', #')})` : '';
+    return [
+      String(idx + 1),
+      `#${a.idMov}`,
+      fechaHora,
+      obs + fiadosTxt,
+      formatoMoneda(a.monto)
+    ];
+  });
+
+  autoTable(doc, {
+    startY: startTableY,
+    head: [['#', 'Recibo', 'Fecha y Hora', 'Observaciones / Detalle', 'Monto Pagado']],
+    body: rows,
+    theme: 'striped',
+    headStyles: {
+      fillColor: [16, 185, 129],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 9
+    },
+    styles: {
+      fontSize: 8.5,
+      cellPadding: 3,
+      textColor: [30, 41, 59],
+      valign: 'middle'
+    },
+    columnStyles: {
+      0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 22, halign: 'center', fontStyle: 'bold' },
+      2: { cellWidth: 38 },
+      3: { cellWidth: 'auto' },
+      4: { cellWidth: 34, halign: 'right', fontStyle: 'bold', textColor: [16, 185, 129] }
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252]
+    },
+    foot: [['', '', '', 'TOTAL ABONADO:', formatoMoneda(totalAbonado)]],
+    footStyles: {
+      fillColor: [240, 253, 244],
+      textColor: [22, 101, 52],
+      fontStyle: 'bold',
+      fontSize: 9.5,
+      halign: 'right'
+    }
+  });
+
+  // Footer con paginación
+  const totalPages = (doc as any).internal.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      `Página ${i} de ${totalPages} · Historial de Abonos · Súper Colmado DAVID`,
+      105,
+      290,
+      { align: 'center' }
+    );
+  }
+
+  const nombreArchivo = `Historial_Abonos_${opciones.nombreCliente.replace(/\s+/g, '_')}.pdf`;
+  doc.save(nombreArchivo);
+}
+
+

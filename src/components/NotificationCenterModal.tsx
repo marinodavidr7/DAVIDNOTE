@@ -67,13 +67,6 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
     }
   };
 
-  const handleTestNotification = async () => {
-    setTesting(true);
-    await notificationService.testNotification(rol);
-    setTesting(false);
-    setTestSuccess(true);
-    setTimeout(() => setTestSuccess(false), 4000);
-  };
 
   const handleMarkAllRead = () => {
     notificationService.markAllAsRead(rol, clienteId);
@@ -195,18 +188,13 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                     Notificaciones Push Activas en Navegador
                   </div>
                   <div className="text-[11px] text-emerald-400/80">
-                    Recibirás alertas incluso con la app en segundo plano
+                    Recibirás alertas de tus consumos y operaciones en tu dispositivo
                   </div>
                 </div>
               </div>
-              <button
-                onClick={handleTestNotification}
-                disabled={testing}
-                className="px-2.5 py-1.5 text-xs font-medium bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 border border-emerald-500/40 rounded-lg flex items-center gap-1.5 transition shrink-0"
-              >
-                <Send className="w-3 h-3" />
-                {testing ? 'Enviando...' : 'Probar'}
-              </button>
+              <span className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                Activo
+              </span>
             </div>
           ) : permission === 'denied' ? (
             <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-950/30 border border-amber-500/30 text-amber-300 text-xs">
@@ -328,15 +316,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
               <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
                 Las alertas sobre nuevos clientes, límites superados y consumos aparecerán en este lugar.
               </p>
-              {permission === 'granted' && (
-                <button
-                  onClick={handleTestNotification}
-                  className="mt-4 px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-blue-400 rounded-lg border border-slate-700 inline-flex items-center gap-1.5"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  Enviar Notificación de Prueba
-                </button>
-              )}
+
             </div>
           ) : (
             filteredList.map((notif) => (

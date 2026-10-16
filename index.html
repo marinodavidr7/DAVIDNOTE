@@ -2,12 +2,12 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
     <title>Súper Colmado DAVID</title>
     <meta name="description" content="Sistema de gestión de fiados y clientes para Súper Colmado DAVID con soporte para Google Sheets y generación de APK / PWA móvil." />
     
     <!-- PWA / Mobile Meta Tags -->
-    <meta name="theme-color" content="#1e40af" />
+    <meta name="theme-color" content="#2563eb">
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -27,8 +27,40 @@
     
     <!-- FontAwesome for original icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+    <style id="responsive-fix">
+/* Evita desbordamiento horizontal */
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* El contenido principal no debe desbordar la pantalla */
+#root {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+/* Inputs y botones táctiles */
+input, select, textarea, button {
+  font-size: 15px;
+  min-height: 44px;
+}
+
+/* Evitar desbordes de texto largo */
+h1, h2, h3, h4, p {
+  overflow-wrap: break-word;
+}
+    </style>
   </head>
-  <body class="bg-slate-900 text-slate-800 antialiased select-none">
+  <body class="bg-slate-900 text-slate-800 antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

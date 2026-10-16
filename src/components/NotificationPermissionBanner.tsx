@@ -33,11 +33,10 @@ export const NotificationPermissionBanner: React.FC<NotificationPermissionBanner
     const res = await notificationService.requestPermission();
     if (res === 'granted') {
       setSuccess(true);
-      await notificationService.testNotification(rol);
       if (onActivated) onActivated();
       setTimeout(() => {
         setShow(false);
-      }, 3000);
+      }, 2500);
     } else {
       setShow(false);
     }

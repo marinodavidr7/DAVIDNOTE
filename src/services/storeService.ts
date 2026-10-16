@@ -7,7 +7,8 @@ import {
   DashboardAdminData,
   DiaGastoCliente,
   ClienteCalculado,
-  DatosColmado
+  DatosColmado,
+  generarNumeroCuentaCliente
 } from '../types';
 import {
   calcularEstadoPago,
@@ -21,126 +22,31 @@ import {
 const STORAGE_KEY_PREFIX = 'colmado_david_';
 const SPREADSHEET_ID_DEFAULT = '1Jj7sEsDccarKgC55yMHFrF7ilsO33z2-3asxzRZTiJE';
 
-// Seed initial data if first time
+// Datos iniciales de clientes con soporte para Apodo, QR, NFC y Número de Cuenta
 function getInitialClientes(): Cliente[] {
   return [
     {
       id: 1,
-      nombre: 'Manuel López',
-      telefono: '8291234567',
+      nombre: 'Victor Manuel Reyes',
+      apodo: 'Ñangon',
+      telefono: '8297807488',
       pin: '1234',
-      saldo: 1850,
+      saldo: 915,
       limite: 5000,
-      diasPago: '15,30'
-    },
-    {
-      id: 2,
-      nombre: 'Carmen Rosario',
-      telefono: '8095551234',
-      pin: '2233',
-      saldo: 4200,
-      limite: 5000,
-      diasPago: '15,30'
-    },
-    {
-      id: 3,
-      nombre: 'José Antonio Pérez',
-      telefono: '8299876543',
-      pin: '4455',
-      saldo: 850,
-      limite: 3500,
-      diasPago: '30'
-    },
-    {
-      id: 4,
-      nombre: 'Francisca Ramírez',
-      telefono: '8493332211',
-      pin: '5566',
-      saldo: 0,
-      limite: 6000,
-      diasPago: '1,15'
+      diasPago: '15,30',
+      codigoQR: 'QR-1-8297807488',
+      nfcUid: 'NFC-0001',
+      numeroCuenta: 'CU-27001-161001'
     }
   ];
 }
 
 function getInitialAutorizados(): Autorizado[] {
-  return [
-    { id: 1, idCliente: 1, nombre: 'Manuel López', parentesco: 'Titular' },
-    { id: 2, idCliente: 1, nombre: 'Rosa López', parentesco: 'Hija' },
-    { id: 3, idCliente: 1, nombre: 'Ana María Gómez', parentesco: 'Esposa' },
-    { id: 4, idCliente: 2, nombre: 'Carmen Rosario', parentesco: 'Titular' },
-    { id: 5, idCliente: 2, nombre: 'Carlos Rosario', parentesco: 'Hijo' },
-    { id: 6, idCliente: 3, nombre: 'José Antonio Pérez', parentesco: 'Titular' },
-    { id: 7, idCliente: 4, nombre: 'Francisca Ramírez', parentesco: 'Titular' }
-  ];
+  return [];
 }
 
 function getInitialMovimientos(): Movimiento[] {
-  const d1 = new Date();
-  d1.setHours(d1.getHours() - 3);
-  const d2 = new Date();
-  d2.setDate(d2.getDate() - 1);
-  const d3 = new Date();
-  d3.setDate(d3.getDate() - 3);
-  const d4 = new Date();
-  d4.setDate(d4.getDate() - 5);
-
-  return [
-    {
-      idMov: 101,
-      idCliente: 1,
-      idAutorizado: 2,
-      tipo: 'Fiado',
-      monto: 650,
-      fechaHora: d1.toISOString(),
-      observaciones: 'Arroz, aceite, salami y pan'
-    },
-    {
-      idMov: 102,
-      idCliente: 1,
-      idAutorizado: 1,
-      tipo: 'Fiado',
-      monto: 1200,
-      fechaHora: d2.toISOString(),
-      observaciones: 'Compra de la semana'
-    },
-    {
-      idMov: 103,
-      idCliente: 2,
-      idAutorizado: 4,
-      tipo: 'Fiado',
-      monto: 2200,
-      fechaHora: d3.toISOString(),
-      observaciones: 'Víveres y embutidos'
-    },
-    {
-      idMov: 104,
-      idCliente: 2,
-      idAutorizado: 5,
-      tipo: 'Fiado',
-      monto: 2000,
-      fechaHora: d2.toISOString(),
-      observaciones: 'Queso y jugos'
-    },
-    {
-      idMov: 105,
-      idCliente: 3,
-      idAutorizado: 6,
-      tipo: 'Fiado',
-      monto: 850,
-      fechaHora: d4.toISOString(),
-      observaciones: 'Desayuno y refrescos'
-    },
-    {
-      idMov: 106,
-      idCliente: 4,
-      idAutorizado: 7,
-      tipo: 'Abono',
-      monto: 1500,
-      fechaHora: d1.toISOString(),
-      observaciones: 'Pago completo de deuda anterior'
-    }
-  ];
+  return [];
 }
 
 function getInitialUsuarios(): Usuario[] {
@@ -191,15 +97,28 @@ class StoreService {
   private usuarios: Usuario[] = [];
   private auditoria: AuditoriaLog[] = [];
   private datosColmado: DatosColmado = getInitialDatosColmado();
-  private webAppUrl: string = '';
+  private webAppUrl: string = 'https://script.google.com/macros/s/AKfycbwpFNZz5oxhwUHrrckxQl-ytnUFmr3FK6ABq_QiZ1JQr48LkaiBr-pLVi_PJj0a8Hu9/exec';
   private offlineQueue: { id: string; action: string; payload: Record<string, any>; timestamp: string }[] = [];
 
   constructor() {
     this.loadFromStorage();
     this.loadOfflineQueue();
     if (typeof window !== 'undefined') {
+      if (navigator.onLine) {
+        setTimeout(() => {
+          this.syncWithGoogleSheet().catch(() => {});
+        }, 1500);
+      }
+      // Auto background sync every 30 seconds
+      setInterval(() => {
+        if (navigator.onLine && this.isGoogleSheetConnected()) {
+          this.syncWithGoogleSheet().catch(() => {});
+        }
+      }, 30000);
+
       window.addEventListener('online', () => {
         this.syncOfflineQueue();
+        this.syncWithGoogleSheet().catch(() => {});
       });
       if ('navigator' in window && 'serviceWorker' in navigator) {
         navigator.serviceWorker.addEventListener('message', (event) => {
@@ -290,13 +209,70 @@ class StoreService {
   private loadFromStorage() {
     try {
       const c = localStorage.getItem(STORAGE_KEY_PREFIX + 'clientes');
-      this.clientes = c ? JSON.parse(c) : getInitialClientes();
+      this.clientes = c ? JSON.parse(c) : [];
+      this.clientes = this.clientes.filter(cli =>
+        !['Manuel López', 'Carmen Rosario', 'Francisca Ramírez'].includes(cli.nombre)
+      );
+
+      if (this.clientes.length === 0) {
+        this.clientes = getInitialClientes();
+        this.autorizados = [
+          { id: 1, idCliente: 1, nombre: 'Victor Manuel Reyes', parentesco: 'Titular' }
+        ];
+        this.movimientos = [
+          {
+            idMov: 1,
+            idCliente: 1,
+            idAutorizado: 1,
+            tipo: 'Fiado',
+            monto: 915,
+            fechaHora: new Date().toISOString(),
+            observaciones: 'Compra y víveres del colmado',
+            pagado: false,
+            saldoPendiente: 915,
+            montoPagado: 0
+          }
+        ];
+      } else {
+        this.clientes.forEach(cli => {
+          if (cli.nombre.toLowerCase().includes('victor') && !cli.apodo) {
+            cli.apodo = 'Ñangon';
+          }
+          if (!cli.codigoQR) {
+            cli.codigoQR = `QR-${cli.id}-${cli.telefono.replace(/[^0-9]/g, '')}`;
+          }
+          if (!cli.nfcUid) {
+            cli.nfcUid = `NFC-${cli.id.toString().padStart(4, '0')}`;
+          }
+          if (!cli.numeroCuenta || !cli.numeroCuenta.startsWith('CU-27001-')) {
+            cli.numeroCuenta = generarNumeroCuentaCliente(cli.id);
+          }
+        });
+      }
 
       const a = localStorage.getItem(STORAGE_KEY_PREFIX + 'autorizados');
-      this.autorizados = a ? JSON.parse(a) : getInitialAutorizados();
+      this.autorizados = a ? JSON.parse(a) : [];
 
       const m = localStorage.getItem(STORAGE_KEY_PREFIX + 'movimientos');
-      this.movimientos = m ? JSON.parse(m) : getInitialMovimientos();
+      this.movimientos = m ? JSON.parse(m) : [];
+      this.movimientos = this.movimientos.filter(mov =>
+        !(mov.idMov >= 101 && mov.idMov <= 106) &&
+        !['Arroz, aceite, salami y pan', 'Compra de la semana', 'Víveres y embutidos', 'Queso y jugos', 'Desayuno y refrescos', 'Pago completo de deuda anterior'].includes(mov.observaciones)
+      );
+      // Sanitizar y compatibilizar saldoPendiente y montoPagado
+      this.movimientos.forEach(mov => {
+        if (mov.tipo === 'Fiado') {
+          if (mov.saldoPendiente === undefined) {
+            if (mov.pagado) {
+              mov.saldoPendiente = 0;
+              mov.montoPagado = mov.monto;
+            } else {
+              mov.saldoPendiente = mov.monto;
+              mov.montoPagado = 0;
+            }
+          }
+        }
+      });
 
       const u = localStorage.getItem(STORAGE_KEY_PREFIX + 'usuarios');
       this.usuarios = u ? JSON.parse(u) : getInitialUsuarios();
@@ -307,11 +283,12 @@ class StoreService {
       const dCol = localStorage.getItem(STORAGE_KEY_PREFIX + 'datos_colmado');
       this.datosColmado = dCol ? JSON.parse(dCol) : getInitialDatosColmado();
 
-      this.webAppUrl = localStorage.getItem(STORAGE_KEY_PREFIX + 'webapp_url') || '';
+      this.webAppUrl = localStorage.getItem(STORAGE_KEY_PREFIX + 'webapp_url') || 'https://script.google.com/macros/s/AKfycbwpFNZz5oxhwUHrrckxQl-ytnUFmr3FK6ABq_QiZ1JQr48LkaiBr-pLVi_PJj0a8Hu9/exec';
+      this.save();
     } catch {
-      this.clientes = getInitialClientes();
-      this.autorizados = getInitialAutorizados();
-      this.movimientos = getInitialMovimientos();
+      this.clientes = [];
+      this.autorizados = [];
+      this.movimientos = [];
       this.usuarios = getInitialUsuarios();
       this.auditoria = getInitialAuditoria();
       this.datosColmado = getInitialDatosColmado();
@@ -421,6 +398,29 @@ class StoreService {
     return res;
   }
 
+  public async exportarTodosLosDatosAGoogleSheet(): Promise<{ success: boolean; message: string }> {
+    if (!this.isGoogleSheetConnected()) {
+      return { success: false, message: 'No hay URL de Google Apps Script configurada' };
+    }
+    try {
+      const payload = {
+        action: 'exportarDatosMasivos',
+        clientes: this.clientes,
+        movimientos: this.movimientos,
+        autorizados: this.autorizados,
+        datosColmado: this.datosColmado
+      };
+      const res = await this.callRemoteApiDirect('exportarDatosMasivos', payload);
+      if (res && res.success) {
+        return { success: true, message: `¡Datos exportados con éxito a tu Google Sheet! (${this.clientes.length} clientes, ${this.movimientos.length} movimientos)` };
+      } else {
+        return { success: false, message: res?.message || 'La Web App no pudo guardar los datos masivos. Asegúrate de actualizar el código de Apps Script.' };
+      }
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Error al exportar datos a Google Sheets.' };
+    }
+  }
+
   public async syncWithGoogleSheet(): Promise<{ success: boolean; message: string; count?: number }> {
     if (!this.isGoogleSheetConnected()) {
       return { success: false, message: 'No hay URL de Google Apps Script configurada' };
@@ -441,19 +441,42 @@ class StoreService {
           diasPago: String(c.diasPago || '15,30')
         }));
 
-        if (Array.isArray(movs)) {
-          this.movimientos = movs.map((m: any) => ({
-            idMov: Number(m.idMov),
-            idCliente: Number(m.idCliente),
-            idAutorizado: m.idAutorizado ? Number(m.idAutorizado) : null,
-            tipo: m.tipo === 'Fiado' ? 'Fiado' : 'Abono',
-            monto: parseFloat(m.monto) || 0,
-            fechaHora: m.fechaHora || new Date().toISOString(),
-            observaciones: m.observaciones || '',
-            nombreCliente: m.nombreCliente,
-            autorizadoNombre: m.autorizadoNombre,
-            autorizadoParentesco: m.autorizadoParentesco
-          }));
+        const remoteMovs = Array.isArray(movs)
+          ? movs
+          : (movs && Array.isArray(movs.movimientos) ? movs.movimientos : []);
+
+        if (remoteMovs.length > 0) {
+          const mapById = new Map<number, Movimiento>();
+          remoteMovs.forEach((m: any) => {
+            const id = Number(m.idMov);
+            mapById.set(id, {
+              idMov: id,
+              idCliente: Number(m.idCliente),
+              idAutorizado: m.idAutorizado ? Number(m.idAutorizado) : null,
+              tipo: m.tipo === 'Fiado' ? 'Fiado' : 'Abono',
+              monto: parseFloat(m.monto) || 0,
+              fechaHora: m.fechaHora || new Date().toISOString(),
+              observaciones: m.observaciones || '',
+              nombreCliente: m.nombreCliente,
+              autorizadoNombre: m.autorizadoNombre,
+              autorizadoParentesco: m.autorizadoParentesco
+            });
+          });
+          this.movimientos.forEach(m => {
+            if (
+              !mapById.has(m.idMov) &&
+              !(m.idMov >= 101 && m.idMov <= 106) &&
+              !['Arroz, aceite, salami y pan', 'Compra de la semana', 'Víveres y embutidos', 'Queso y jugos', 'Desayuno y refrescos', 'Pago completo de deuda anterior'].includes(m.observaciones)
+            ) {
+              mapById.set(m.idMov, m);
+            }
+          });
+          this.movimientos = Array.from(mapById.values());
+        } else {
+          this.movimientos = this.movimientos.filter(m =>
+            !(m.idMov >= 101 && m.idMov <= 106) &&
+            !['Arroz, aceite, salami y pan', 'Compra de la semana', 'Víveres y embutidos', 'Queso y jugos', 'Desayuno y refrescos', 'Pago completo de deuda anterior'].includes(m.observaciones)
+          );
         }
 
         if (fiadoData && fiadoData.autorizados) {
@@ -654,13 +677,6 @@ class StoreService {
 
   // DASHBOARD ADMIN
   public async getDashboardAdmin(): Promise<DashboardAdminData> {
-    if (this.isGoogleSheetConnected()) {
-      const remote = await this.callRemoteApi('getDashboardAdmin');
-      if (remote && remote.clientes) {
-        return remote;
-      }
-    }
-
     const hoy = new Date();
     let totalCobrar = 0;
     let pendientes = 0;
@@ -785,7 +801,9 @@ class StoreService {
       monto: montoNum,
       fechaHora: new Date().toISOString(),
       observaciones: observaciones || '',
-      pagado: false
+      pagado: false,
+      montoPagado: 0,
+      saldoPendiente: montoNum
     };
 
     this.movimientos.push(nuevoMov);
@@ -821,7 +839,18 @@ class StoreService {
     monto: number,
     observaciones: string,
     fiadosPagadosIds: number[] = []
-  ): Promise<{ success: boolean; message?: string; nuevoSaldo?: number }> {
+  ): Promise<{
+    success: boolean;
+    message?: string;
+    nuevoSaldo?: number;
+    detalleAplicacion?: {
+      idMov: number;
+      montoOriginal: number;
+      aplicado: number;
+      saldoPendiente: number;
+      pagadoCompleto: boolean;
+    }[];
+  }> {
     const c = this.clientes.find(cli => cli.id === Number(idCliente));
     if (!c) return { success: false, message: 'Cliente no encontrado' };
 
@@ -829,27 +858,82 @@ class StoreService {
     if (isNaN(montoNum) || montoNum <= 0) return { success: false, message: 'Monto inválido' };
     if (montoNum > c.saldo) return { success: false, message: `El abono supera la deuda (RD$ ${c.saldo.toFixed(2)})` };
 
-    c.saldo -= montoNum;
+    c.saldo = Math.max(0, Math.round((c.saldo - montoNum) * 100) / 100);
     const nextMovId = this.movimientos.length > 0 ? Math.max(...this.movimientos.map(m => m.idMov)) + 1 : 1;
 
-    let targetFiadosIds = [...fiadosPagadosIds];
-    if (targetFiadosIds.length > 0) {
-      for (const fId of targetFiadosIds) {
-        const movFiado = this.movimientos.find(m => m.idMov === fId && m.idCliente === Number(idCliente) && m.tipo === 'Fiado');
-        if (movFiado) {
-          movFiado.pagado = true;
-        }
-      }
+    // Obtener todos los fiados pendientes del cliente, ordenados cronológicamente (los más antiguos primero)
+    const todosFiadosPendientes = this.movimientos
+      .filter(m => m.idCliente === Number(idCliente) && m.tipo === 'Fiado' && !m.pagado && (m.saldoPendiente === undefined || m.saldoPendiente > 0))
+      .sort((a, b) => new Date(a.fechaHora).getTime() - new Date(b.fechaHora).getTime() || a.idMov - b.idMov);
+
+    let fiadosAProcesar: Movimiento[] = [];
+    if (fiadosPagadosIds.length > 0) {
+      // Priorizar los fiados seleccionados expresamente por el usuario
+      const seleccionados = fiadosPagadosIds
+        .map(id => this.movimientos.find(m => m.idMov === id && m.idCliente === Number(idCliente) && m.tipo === 'Fiado'))
+        .filter((m): m is Movimiento => !!m && !m.pagado);
+
+      // Si sobra abono tras los seleccionados, continuar con los pendientes restantes
+      const noSeleccionados = todosFiadosPendientes.filter(f => !fiadosPagadosIds.includes(f.idMov));
+      fiadosAProcesar = [...seleccionados, ...noSeleccionados];
     } else {
-      // Auto mark oldest unpaid fiados as paid up to montoNum (cuaderno style)
-      let restante = montoNum;
-      const fiadosPendientes = this.movimientos.filter(m => m.idCliente === Number(idCliente) && m.tipo === 'Fiado' && !m.pagado);
-      for (const f of fiadosPendientes) {
-        if (restante >= f.monto) {
-          f.pagado = true;
-          restante -= f.monto;
-          targetFiadosIds.push(f.idMov);
-        }
+      fiadosAProcesar = todosFiadosPendientes;
+    }
+
+    let restante = montoNum;
+    const targetFiadosIds: number[] = [];
+    const detalleAplicacion: {
+      idMov: number;
+      montoOriginal: number;
+      aplicado: number;
+      saldoPendiente: number;
+      pagadoCompleto: boolean;
+    }[] = [];
+
+    for (const f of fiadosAProcesar) {
+      if (restante <= 0) break;
+
+      const pendActual = typeof f.saldoPendiente === 'number'
+        ? f.saldoPendiente
+        : (f.pagado ? 0 : f.monto);
+
+      if (pendActual <= 0) {
+        f.pagado = true;
+        f.saldoPendiente = 0;
+        continue;
+      }
+
+      if (restante >= pendActual) {
+        // PAGO COMPLETO
+        const aplicado = pendActual;
+        f.montoPagado = Math.round(((f.montoPagado || (f.monto - pendActual)) + aplicado) * 100) / 100;
+        f.saldoPendiente = 0;
+        f.pagado = true;
+        restante = Math.round((restante - aplicado) * 100) / 100;
+        targetFiadosIds.push(f.idMov);
+        detalleAplicacion.push({
+          idMov: f.idMov,
+          montoOriginal: f.monto,
+          aplicado,
+          saldoPendiente: 0,
+          pagadoCompleto: true
+        });
+      } else {
+        // PAGO PARCIAL: queda pendiente para la otra cuenta / próximo cobro
+        const aplicado = restante;
+        f.montoPagado = Math.round(((f.montoPagado || (f.monto - pendActual)) + aplicado) * 100) / 100;
+        f.saldoPendiente = Math.round((pendActual - aplicado) * 100) / 100;
+        f.pagado = false;
+        restante = 0;
+        targetFiadosIds.push(f.idMov);
+        detalleAplicacion.push({
+          idMov: f.idMov,
+          montoOriginal: f.monto,
+          aplicado,
+          saldoPendiente: f.saldoPendiente,
+          pagadoCompleto: false
+        });
+        break;
       }
     }
 
@@ -865,12 +949,17 @@ class StoreService {
     };
 
     this.movimientos.push(nuevoMov);
-    this.registrarLog('Colmadero', 'Admin', 'Registrar Abono', `Cliente: ${c.nombre}, Monto: $${montoNum}`);
+    this.registrarLog(
+      'Colmadero',
+      'Admin',
+      'Registrar Abono',
+      `Cliente: ${c.nombre}, Monto: $${montoNum}${targetFiadosIds.length > 0 ? ` (Fiados: #${targetFiadosIds.join(', #')})` : ''}`
+    );
     this.save();
 
     this.callRemoteApi('registrarAbono', { idCliente, monto: montoNum, observaciones, fiadosPagadosIds: targetFiadosIds }).catch(() => {});
 
-    return { success: true, nuevoSaldo: c.saldo };
+    return { success: true, nuevoSaldo: c.saldo, detalleAplicacion };
   }
 
   // CREAR CLIENTE
@@ -880,7 +969,8 @@ class StoreService {
     pin: string,
     limite: number | string,
     autorizados: { nombre: string; parentesco: string }[],
-    diasPago: string
+    diasPago: string,
+    apodo: string = ''
   ): Promise<{ success: boolean; message?: string; id?: number; nombre?: string }> {
     if (!nombre.trim() || !telefono.trim()) {
       return { success: false, message: 'Nombre y teléfono son requeridos' };
@@ -903,11 +993,15 @@ class StoreService {
     const nuevoCliente: Cliente = {
       id: nuevoId,
       nombre: nombre.trim(),
+      apodo: apodo.trim() || undefined,
       telefono: telLimpio,
       pin: pinStr,
       saldo: 0,
       limite: limiteNum,
-      diasPago: diasPagoFinal
+      diasPago: diasPagoFinal,
+      codigoQR: `QR-${nuevoId}-${telLimpio}`,
+      nfcUid: `NFC-${nuevoId.toString().padStart(4, '0')}`,
+      numeroCuenta: generarNumeroCuentaCliente(nuevoId)
     };
 
     this.clientes.push(nuevoCliente);
@@ -940,6 +1034,58 @@ class StoreService {
     this.callRemoteApi('crearCliente', { nombre, telefono, pin: pinStr, limite, autorizados, diasPago }).catch(() => {});
 
     return { success: true, id: nuevoId, nombre };
+  }
+
+  // APODO
+  public async actualizarApodoCliente(idCliente: number, apodo: string): Promise<{ success: boolean; message?: string }> {
+    const c = this.clientes.find(cli => cli.id === Number(idCliente));
+    if (!c) return { success: false, message: 'Cliente no encontrado' };
+    c.apodo = apodo.trim() || undefined;
+    this.registrarLog('Colmadero', 'Admin', 'Actualizar Apodo', `Cliente: ${c.nombre}, Apodo: ${apodo}`);
+    this.save();
+    return { success: true };
+  }
+
+  // VINCULAR TAG / TARJETA NFC A CLIENTE
+  public async vincularNfcCliente(idCliente: number, nfcUid: string): Promise<{ success: boolean; message?: string; nfcUid?: string }> {
+    const c = this.clientes.find(cli => cli.id === Number(idCliente));
+    if (!c) return { success: false, message: 'Cliente no encontrado' };
+
+    const cleanUid = nfcUid.trim().toUpperCase();
+    if (!cleanUid) return { success: false, message: 'El UID del tag NFC no puede estar vacío' };
+
+    // Verificar si otro cliente ya tiene asignado este NFC UID
+    const clienteExistente = this.clientes.find(
+      cli => cli.id !== Number(idCliente) && cli.nfcUid && cli.nfcUid.trim().toUpperCase() === cleanUid
+    );
+    if (clienteExistente) {
+      return {
+        success: false,
+        message: `Este tag NFC ya está asignado a ${clienteExistente.nombre} (#${clienteExistente.id})`
+      };
+    }
+
+    c.nfcUid = cleanUid;
+    this.registrarLog('Colmadero', 'Admin', 'Vincular NFC', `Cliente: ${c.nombre} (#${c.id}), Tag NFC: ${cleanUid}`);
+    this.save();
+
+    this.callRemoteApi('actualizarNfcCliente', { idCliente, nfcUid: cleanUid }).catch(() => {});
+
+    return { success: true, nfcUid: cleanUid };
+  }
+
+  // DESVINCULAR TAG / TARJETA NFC DE CLIENTE
+  public async desvincularNfcCliente(idCliente: number): Promise<{ success: boolean; message?: string }> {
+    const c = this.clientes.find(cli => cli.id === Number(idCliente));
+    if (!c) return { success: false, message: 'Cliente no encontrado' };
+
+    c.nfcUid = undefined;
+    this.registrarLog('Colmadero', 'Admin', 'Desvincular NFC', `Cliente: ${c.nombre} (#${c.id})`);
+    this.save();
+
+    this.callRemoteApi('actualizarNfcCliente', { idCliente, nfcUid: '' }).catch(() => {});
+
+    return { success: true };
   }
 
   // DIAS DE PAGO & LIMITE
@@ -994,6 +1140,35 @@ class StoreService {
     return { success: true, pin, nombre: c.nombre };
   }
 
+  public async cambiarPINCliente(idCliente: number, nuevoPin: string, pinActual?: string): Promise<{ success: boolean; message?: string; pin?: string }> {
+    const cleanPin = String(nuevoPin).trim();
+    if (!/^\d{4}$/.test(cleanPin)) {
+      return { success: false, message: 'El nuevo PIN debe tener exactamente 4 dígitos numéricos' };
+    }
+    const c = this.clientes.find(cli => cli.id === Number(idCliente));
+    if (!c) return { success: false, message: 'Cliente no encontrado' };
+
+    if (pinActual !== undefined && pinActual.trim()) {
+      if (c.pin && c.pin.trim() !== pinActual.trim()) {
+        return { success: false, message: 'El PIN actual ingresado es incorrecto' };
+      }
+    }
+
+    c.pin = cleanPin;
+    this.registrarLog(c.nombre, 'Cliente', 'Cambio de PIN', `El cliente ${c.nombre} (#${c.id}) actualizó su PIN de seguridad`);
+    this.save();
+
+    this.callRemoteApi('actualizarPinCliente', { idCliente, pin: cleanPin }).catch(() => {});
+
+    return { success: true, pin: cleanPin };
+  }
+
+  public getNumeroCuentaCliente(idCliente: number): string {
+    const c = this.clientes.find(cli => cli.id === Number(idCliente));
+    if (c && c.numeroCuenta) return c.numeroCuenta;
+    return generarNumeroCuentaCliente(idCliente);
+  }
+
   // AUTORIZADOS
   public getAutorizadosDeCliente(idCliente: number): Autorizado[] {
     const list = this.autorizados.filter(a => a.idCliente === Number(idCliente));
@@ -1043,6 +1218,28 @@ class StoreService {
     this.save();
 
     this.callRemoteApi('editarAutorizado', { idAutorizado, nombre, parentesco, esCliente }).catch(() => {});
+
+    return { success: true };
+  }
+
+  public async bloquearAutorizado(idAutorizado: number, bloqueado: boolean, esCliente: boolean): Promise<{ success: boolean; message?: string }> {
+    const a = this.autorizados.find(x => x.id === Number(idAutorizado));
+    if (!a) return { success: false, message: 'Autorizado no encontrado' };
+
+    if (a.parentesco.toLowerCase() === 'titular') {
+      return { success: false, message: 'No se puede bloquear al titular' };
+    }
+
+    a.bloqueado = bloqueado;
+    this.registrarLog(
+      esCliente ? 'Cliente' : 'Colmadero',
+      esCliente ? 'Cliente' : 'Admin',
+      bloqueado ? 'Bloquear Autorizado' : 'Desbloquear Autorizado',
+      `ID: ${idAutorizado}, Nombre: ${a.nombre}`
+    );
+    this.save();
+
+    this.callRemoteApi('bloquearAutorizado', { idAutorizado, bloqueado, esCliente }).catch(() => {});
 
     return { success: true };
   }
