@@ -8,6 +8,7 @@ export interface DatosColmado {
   diasAtencion: string;
   rnc?: string;
   nota?: string;
+  etiquetaCliente?: string; // Etiqueta/badge que se muestra al cliente (ej. "Cliente VIP", "Cliente Oro")
 }
 
 export interface Cliente {

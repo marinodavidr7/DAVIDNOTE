@@ -66,6 +66,7 @@ import {
 } from './types';
 import { formatoMoneda, formatearFechaCorta, esDiaDePagoHoy, obtenerQuincenaActual } from './utils/paymentCycle';
 import { ToastContainer, ToastMessage } from './components/Toast';
+import { OfflineSyncIndicator } from './components/OfflineSyncIndicator';
 import { ReceiptModal } from './components/ReceiptModal';
 import { LimitExceededModal } from './components/LimitExceededModal';
 import { EditLimitModal } from './components/EditLimitModal';
@@ -82,7 +83,7 @@ import { NotificationBellButton } from './components/NotificationBellButton';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
 import { notificationService } from './services/notificationService';
 import { usePWAInstall } from './hooks/usePWAInstall';
-import { generarReciboPDF, generarReporteHistorialPDF, generarGastosQuincenaPDF } from './utils/pdfGenerator';
+import { generarReciboPDF, generarReporteHistorialPDF, generarGastosQuincenaPDF, generarHistorialCompletoClientePDF } from './utils/pdfGenerator';
 import { WhatsAppIconButton, WhatsAppIcon } from './components/WhatsAppButton';
 import { WhatsAppModal } from './components/WhatsAppModal';
 import { ClientMovementsSpreadsheet } from './components/ClientMovementsSpreadsheet';
@@ -97,7 +98,6 @@ import { LoginView } from './components/LoginView';
 import { ejecutarAperturaWhatsApp, normalizarTelefonoWhatsApp } from './utils/whatsapp';
 
 type AppView =
-  | 'landing'
   | 'admin-login'
   | 'admin-dashboard'
   | 'admin-fiado'
@@ -121,12 +121,12 @@ export default function App() {
       return 'admin-dashboard';
     }
     if (saved === 'client-dashboard') {
-      return 'landing';
+      return localStorage.getItem('colmado_current_client_id') ? 'client-dashboard' : 'client-login';
     }
-    if (saved && ['landing', 'admin-login', 'admin-dashboard', 'client-login'].includes(saved)) {
+    if (saved && ['admin-login', 'admin-dashboard', 'client-login'].includes(saved)) {
       return saved as AppView;
     }
-    return 'landing';
+    return 'client-login';
   });
   const [adminTab, setAdminTab] = useState<'inicio' | 'clientes' | 'historial' | 'auditoria'>(() => {
     const saved = localStorage.getItem('colmado_admin_tab');
@@ -172,6 +172,9 @@ export default function App() {
   const [isColmadoSettingsOpen, setIsColmadoSettingsOpen] = useState(false);
   const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
   const [datosColmado, setDatosColmado] = useState<DatosColmado>(() => store.getDatosColmado());
+
+  // Etiqueta/badge del cliente (configurable en Datos del Colmado)
+  const etiquetaCliente = (datosColmado.etiquetaCliente?.trim()) || 'Cliente VIP';
   const [dismissDemoBanner, setDismissDemoBanner] = useState(() => localStorage.getItem('colmado_dismiss_demo_banner') === 'true');
   const [activeReceipt, setActiveReceipt] = useState<Movimiento | null>(null);
   const [limitExceededData, setLimitExceededData] = useState<{
@@ -233,6 +236,27 @@ export default function App() {
   const [selectedClientDetail, setSelectedClientDetail] = useState<ClienteCalculado | null>(null);
   const [selectedClientHistory, setSelectedClientHistory] = useState<Movimiento[]>([]);
   const [selectedClientDateFiltro, setSelectedClientDateFiltro] = useState<string>('');
+  const [selectedClientMesFiltro, setSelectedClientMesFiltro] = useState<string>('');
+
+  const mesesDisponiblesMovimientos = useMemo(() => {
+    const set = new Set<string>();
+    selectedClientHistory.forEach(m => {
+      const ym = (m.fechaHora || '').slice(0, 7);
+      if (ym) set.add(ym);
+    });
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [selectedClientHistory]);
+
+  const selectedClientHistoryFiltrada = useMemo(() => {
+    if (!selectedClientMesFiltro) return selectedClientHistory;
+    return selectedClientHistory.filter(m => (m.fechaHora || '').slice(0, 7) === selectedClientMesFiltro);
+  }, [selectedClientHistory, selectedClientMesFiltro]);
+
+  const formatearMesAnioMov = (ym: string) => {
+    const [y, mm] = ym.split('-');
+    const meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    return `${meses[Number(mm) - 1] || mm} ${y}`;
+  };
 
   // Client Session State
   const [currentClient, setCurrentClient] = useState<ClienteCalculado | null>(null);
@@ -246,10 +270,37 @@ export default function App() {
     if (currentView === 'admin-detalle-cliente' && !selectedClientDetail) {
       setCurrentView('admin-dashboard');
     }
-    if (currentView === 'client-dashboard' && !currentClient) {
-      setCurrentView('landing');
+    if (currentView === 'client-dashboard' && !currentClient && !localStorage.getItem('colmado_current_client_id')) {
+      setCurrentView('client-login');
     }
   }, [currentView, selectedClientDetail, currentClient]);
+
+  // Restaurar la sesión del cliente al recargar la página
+  useEffect(() => {
+    const savedId = localStorage.getItem('colmado_current_client_id');
+    if (!savedId) return;
+    (async () => {
+      try {
+        const data = await store.getDashboardAdmin();
+        const cli = data.clientes.find(c => c.id === Number(savedId));
+        if (!cli) {
+          localStorage.removeItem('colmado_current_client_id');
+          setCurrentView('client-login');
+          return;
+        }
+        setCurrentClient(cli);
+        const dias = store.getGastosDiariosCliente(cli.id);
+        setClientGastos(dias);
+        const movs: Movimiento[] = [];
+        dias.forEach(d => movs.push(...d.movimientos));
+        setClientMovimientos(movs);
+        setClientAutorizados(store.getAutorizadosDeCliente(cli.id));
+      } catch {
+        localStorage.removeItem('colmado_current_client_id');
+        setCurrentView('client-login');
+      }
+    })();
+  }, []);
 
   // Event handler global y capa de interacción para registrar touchstart en navegación ('inicio', 'clientes', 'historial')
   // sin interferencia de modales ni delays de toque en iOS/Android/WebViews
@@ -315,6 +366,8 @@ export default function App() {
   const [activeNfcModalCliente, setActiveNfcModalCliente] = useState<ClienteCalculado | null>(null);
   const [isProductsModalOpen, setIsProductsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isOnline, setIsOnline] = useState<boolean>(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const [pendingOfflineCount, setPendingOfflineCount] = useState<number>(() => store.getPendingOfflineCount());
 
   // Load Admin Dashboard
   const refreshAdminDashboard = async () => {
@@ -359,6 +412,66 @@ export default function App() {
 
     return () => clearInterval(pollingInterval);
   }, [selectedClientDetail?.id]);
+
+  // Vacía la cola offline y refresca el indicador. announce = muestra toast del resultado.
+  const syncPendingQueue = async (announce: boolean) => {
+    if (store.getPendingOfflineCount() === 0) {
+      setPendingOfflineCount(0);
+      return;
+    }
+    try {
+      const res = await store.syncOfflineQueue();
+      setPendingOfflineCount(store.getPendingOfflineCount());
+      if (res.syncedCount > 0) {
+        await refreshAdminDashboard();
+        if (announce) {
+          showToast('Sincronización Exitosa', `Se enviaron ${res.syncedCount} operaciones a Google Sheets`, 'success');
+        }
+      }
+    } catch (e) {
+      console.warn('Error sincronizando cola offline:', e);
+    }
+  };
+
+  const handleForceSync = async () => {
+    vibrate(10);
+    await syncPendingQueue(true);
+  };
+
+  // Listener para monitoreo de conexión Online / Offline y sincronización automática de la cola
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      if (store.getPendingOfflineCount() > 0) {
+        showToast('Conexión Restablecida', 'Sincronizando operaciones pendientes con Google Sheets...', 'info');
+      }
+      await syncPendingQueue(true);
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      showToast('Modo Offline', 'Trabajando sin conexión. Tus fiados y abonos se guardarán localmente.', 'warning');
+    };
+
+    const handleQueueChange = (e: any) => {
+      setPendingOfflineCount(e.detail?.count ?? store.getPendingOfflineCount());
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('colmado_offline_queue_changed', handleQueueChange);
+
+    // Al abrir la app, intenta vaciar la cola si hay conexión y operaciones pendientes
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      syncPendingQueue(false);
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('colmado_offline_queue_changed', handleQueueChange);
+    };
+  }, []);
 
   // WhatsApp reminder
   const sendWhatsAppReminder = (c: { nombre: string; telefono: string; saldo: number; diasPago?: string }) => {
@@ -414,6 +527,7 @@ export default function App() {
         if (clientRemember) localStorage.setItem('colmado_cliente_tel', clientPhone);
         else localStorage.removeItem('colmado_cliente_tel');
 
+        localStorage.setItem('colmado_current_client_id', String(res.cliente.id));
         setCurrentClient(res.cliente);
         const dias = store.getGastosDiariosCliente(res.cliente.id);
         setClientGastos(dias);
@@ -776,10 +890,48 @@ export default function App() {
   const fiadosPendientesAbono = useMemo(() => {
     const idC = Number(formAbonoCliente);
     if (!idC) return [];
-    return adminHistorial
-      .filter(m => m.idCliente === idC && m.tipo === 'Fiado' && !m.pagado && (m.saldoPendiente === undefined || m.saldoPendiente > 0))
+    const cliente = adminClientes.find(c => c.id === idC);
+    const saldoCliente = cliente ? Math.max(0, cliente.saldo) : 0;
+    if (saldoCliente <= 0) return [];
+
+    // Solo fiados del cliente no pagados con saldo pendiente > 0
+    const fiadosNoPagados = adminHistorial
+      .filter(m => Number(m.idCliente) === idC && m.tipo === 'Fiado' && !m.pagado && (typeof m.saldoPendiente === 'number' ? m.saldoPendiente > 0 : m.monto > 0))
       .sort((a, b) => new Date(a.fechaHora).getTime() - new Date(b.fechaHora).getTime() || a.idMov - b.idMov);
-  }, [adminHistorial, formAbonoCliente]);
+
+    // Garantía absoluta: Solo mostrar fiados que componen exactamente la deuda actual (saldoCliente).
+    // Si el cliente debe 60 pesos, NUNCA deben mostrarse fiados de compras pasadas ya pagadas.
+    let acumuladoDeuda = 0;
+    const listaResultante: Movimiento[] = [];
+
+    for (const f of fiadosNoPagados) {
+      if (acumuladoDeuda >= saldoCliente) break;
+
+      const pendOriginal = typeof f.saldoPendiente === 'number' ? f.saldoPendiente : f.monto;
+      if (pendOriginal <= 0) continue;
+
+      const restanteHastaSaldo = Math.round((saldoCliente - acumuladoDeuda) * 100) / 100;
+      const pendEfectivo = Math.min(pendOriginal, restanteHastaSaldo);
+
+      if (pendEfectivo > 0) {
+        listaResultante.push({
+          ...f,
+          saldoPendiente: pendEfectivo
+        });
+        acumuladoDeuda = Math.round((acumuladoDeuda + pendEfectivo) * 100) / 100;
+      }
+    }
+
+    return listaResultante;
+  }, [adminHistorial, formAbonoCliente, adminClientes]);
+
+  // Sincronizar selección de fiados pendientes para evitar selecciones huérfanas
+  useEffect(() => {
+    if (selectedFiadosPagados.length > 0) {
+      const idsValidos = new Set(fiadosPendientesAbono.map(f => f.idMov));
+      setSelectedFiadosPagados(prev => prev.filter(id => idsValidos.has(id)));
+    }
+  }, [fiadosPendientesAbono]);
 
   const todosFiadosAbonoSeleccionados = useMemo(() => {
     return fiadosPendientesAbono.length > 0 && fiadosPendientesAbono.every(f => selectedFiadosPagados.includes(f.idMov));
@@ -797,6 +949,11 @@ export default function App() {
       setSelectedFiadosPagados([]);
     } else {
       setSelectedFiadosPagados(fiadosPendientesAbono.map(f => f.idMov));
+      // Auto-completar el monto del abono con el total de fiados seleccionados
+      const suma = fiadosPendientesAbono.reduce((acc, f) => acc + (typeof f.saldoPendiente === 'number' ? f.saldoPendiente : f.monto), 0);
+      if (suma > 0) {
+        setFormAbonoMonto(suma.toString());
+      }
     }
   };
 
@@ -876,9 +1033,18 @@ export default function App() {
   }, [formAbonoMonto, fiadosPendientesAbono, selectedFiadosPagados]);
 
   return (
-    <div className={`min-h-screen ${currentView === 'landing' || currentView === 'client-login' || currentView === 'admin-login' ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-800'} flex flex-col selection:bg-blue-500 selection:text-white`}>
+      <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col selection:bg-blue-500 selection:text-white">
       {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
+      {/* ======================================================== */}
+      {/* INDICADOR OFFLINE & COLA DE SINCRONIZACIÓN */}
+      {/* ======================================================== */}
+      <OfflineSyncIndicator
+        isOnline={isOnline}
+        pendingCount={pendingOfflineCount}
+        onForceSync={handleForceSync}
+      />
 
       {/* Modals */}
       <ReceiptModal movimiento={activeReceipt} onClose={() => setActiveReceipt(null)} />
@@ -1046,107 +1212,8 @@ export default function App() {
       />
 
       {/* Main Container - Responsive Mobile-First Root */}
-      <div className="w-full flex-1 flex flex-col relative overflow-x-hidden">
+      <div className={`w-full flex flex-col relative ${currentView === 'client-dashboard' ? 'flex-none h-[100dvh] overflow-hidden' : 'flex-1 overflow-x-clip'}`}>
         
-        {/* ======================================================== */}
-        {/* 1. LANDING VIEW */}
-        {/* ======================================================== */}
-        {currentView === 'landing' && (
-          <div className="w-full flex-1 flex flex-col justify-between p-6 sm:px-10 sm:py-10 text-center relative overflow-hidden bg-gradient-to-b from-blue-900 via-slate-900 to-slate-950 text-white min-h-[100dvh] lg:px-16 lg:py-8 lg:grid lg:grid-cols-2 lg:grid-rows-[auto_1fr] lg:gap-x-20 lg:text-left lg:bg-gradient-to-br lg:from-blue-900 lg:via-slate-900 lg:to-slate-950">
-            <div className="absolute top-0 right-0 w-80 h-80 bg-blue-500/15 rounded-full -mr-32 -mt-32 pointer-events-none blur-2xl"></div>
-            <div className="absolute bottom-0 left-0 w-72 h-72 bg-blue-400/10 rounded-full -ml-28 -mb-28 pointer-events-none blur-xl"></div>
-
-            {/* Top Bar with APK button */}
-            <div className="relative z-10 flex items-center justify-end pt-2 lg:col-span-2">
-              <button
-                onClick={() => { vibrate(); setIsApkGuideOpen(true); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-yellow-400/20 hover:bg-yellow-400/30 text-yellow-300 font-bold text-xs transition border border-yellow-400/30"
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                <span>Instalar / APK</span>
-              </button>
-            </div>
-
-            {/* Hero / Brand */}
-            <div className="relative z-10 my-auto py-8 flex flex-col items-center lg:items-start lg:col-start-1 lg:row-start-2 lg:self-center">
-              <div className="w-24 h-24 bg-white rounded-3xl mb-4 flex items-center justify-center shadow-2xl p-4 transform hover:scale-105 transition">
-                <ShoppingBag className="w-14 h-14 text-blue-700" />
-              </div>
-              <h1 className="text-2xl sm:text-3xl lg:text-5xl font-extrabold tracking-tight text-white mb-1">
-                {datosColmado.nombre}
-              </h1>
-              <p className="text-slate-300 text-xs sm:text-sm font-medium">{datosColmado.slogan}</p>
-
-              {/* Info rápida del colmado */}
-              <div className="mt-4 max-w-xs lg:max-w-md w-full bg-white/5 border border-white/10 px-3.5 py-2 rounded-2xl text-[11px] lg:text-xs text-blue-100 space-y-1 backdrop-blur-xs text-left">
-                <div className="flex items-start gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                  <span className="truncate">{datosColmado.direccion}</span>
-                </div>
-                <div className="flex items-center justify-between text-[10px] text-slate-300 pt-0.5">
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-cyan-400" />
-                    {datosColmado.horario}
-                  </span>
-                  <span className="flex items-center gap-1 font-semibold text-amber-300">
-                    <Phone className="w-3 h-3" />
-                    {datosColmado.telefono}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-8 max-w-xs lg:max-w-md bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-sm">
-                <p className="text-sm font-bold text-slate-100">
-                  Consulta tu deuda en línea
-                </p>
-                <p className="text-xs text-blue-200 mt-1">
-                  Solo necesitas tu número de teléfono y tu PIN de 4 dígitos
-                </p>
-              </div>
-
-              {/* Install PWA Prompt if installable */}
-              {isInstallable && (
-                <button
-                  onClick={() => { vibrate(); install(); }}
-                  className="mt-5 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-full text-xs font-bold flex items-center gap-2 shadow-lg transition animate-pulse"
-                >
-                  <Download className="w-4 h-4" />
-                  Instalar App en tu pantalla de inicio
-                </button>
-              )}
-            </div>
-
-            {/* Bottom Actions */}
-            <div className="relative z-10 w-full max-w-sm mx-auto space-y-3 pb-4 lg:col-start-2 lg:row-start-2 lg:self-center lg:max-w-md lg:mx-0 lg:justify-self-start">
-              <button
-                onClick={() => { vibrate(); setCurrentView('client-login'); }}
-                className="w-full py-4 bg-blue-600 hover:bg-blue-700 active:scale-98 text-white rounded-2xl font-bold text-base shadow-xl flex items-center justify-center gap-3 transition"
-              >
-                <User className="w-5 h-5" />
-                Soy Cliente
-              </button>
-
-              <button
-                onClick={() => { vibrate(); setCurrentView('admin-login'); }}
-                className="w-full py-4 bg-white/10 hover:bg-white/20 active:scale-98 text-white rounded-2xl font-bold text-base border border-white/20 backdrop-blur-md flex items-center justify-center gap-3 transition"
-              >
-                <Shield className="w-5 h-5 text-yellow-400" />
-                Soy Colmadero
-              </button>
-
-              <div className="flex justify-between items-center text-[11px] text-slate-400 pt-3 px-2">
-                <span>v2.2 · Súper Colmado</span>
-                <button
-                  onClick={() => setIsApkGuideOpen(true)}
-                  className="text-blue-300 underline font-semibold"
-                >
-                  Generador de APK
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* ======================================================== */}
         {/* 2. ADMIN LOGIN */}
         {/* ======================================================== */}
@@ -1155,7 +1222,6 @@ export default function App() {
             initialRole="admin"
             onAdminLogin={handleAdminLogin}
             onClientLogin={handleClientLogin}
-            onBackToLanding={() => { vibrate(10); setCurrentView('landing'); }}
             onOpenApkGuide={() => { vibrate(10); setIsApkGuideOpen(true); }}
             datosColmado={datosColmado}
             adminEmail={adminEmail}
@@ -1171,7 +1237,6 @@ export default function App() {
             clientRemember={clientRemember}
             setClientRemember={setClientRemember}
             isSubmitting={isSubmitting}
-            clientesDemo={adminClientes}
             onRoleChanged={(r) => {
               setCurrentView(r === 'client' ? 'client-login' : 'admin-login');
             }}
@@ -1336,7 +1401,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     vibrate();
-                    setCurrentView('landing');
+                    setCurrentView('admin-login');
                     showToast('Sesión Cerrada', '', 'info');
                   }}
                   className="p-2 rounded-xl text-slate-400 hover:text-red-400 hover:bg-slate-800 transition"
@@ -1504,7 +1569,7 @@ export default function App() {
                   onClick={() => {
                     vibrate();
                     setDrawerOpen(false);
-                    setCurrentView('landing');
+                    setCurrentView('admin-login');
                     showToast('Sesión Cerrada', '', 'info');
                   }}
                   className="w-full py-3 bg-red-50 hover:bg-red-100 text-red-600 font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition"
@@ -1518,7 +1583,7 @@ export default function App() {
         )}
 
             {/* MAIN CONTENT AREA (Full Width fluido sin espacios muertos laterales) */}
-            <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 xl:px-10 py-6 overflow-y-auto overscroll-contain lg:h-screen main-content-scroll">
+            <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 xl:px-10 py-6 lg:overflow-y-auto lg:overscroll-contain lg:h-screen main-content-scroll">
 
             {/* TAB INICIO */}
             {adminTab === 'inicio' && (
@@ -1745,15 +1810,17 @@ export default function App() {
                           >
                             {/* Nivel Superior: Avatar, Nombre/Tel a la izq; Balance a la der */}
                             <div className="flex items-start justify-between gap-2.5">
-                              <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
                                 <div className="w-10 h-10 rounded-xl bg-red-600 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-xs">
                                   {c.nombre.charAt(0).toUpperCase()}
                                 </div>
-                                <div className="min-w-0">
-                                  <div className="font-extrabold text-xs sm:text-sm text-slate-900 truncate">{c.nombre}</div>
-                                  <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                                    <span className="text-[11px] text-slate-500 truncate">{c.telefono}</span>
-                                    <span className="font-mono text-[9px] text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded font-bold border border-blue-200/60">
+                                <div className="min-w-0 flex-1 flex flex-col gap-1 overflow-hidden">
+                                  <div className="min-w-0 w-full whitespace-nowrap truncate">
+                                    <div className="font-extrabold text-xs sm:text-sm text-slate-900 whitespace-nowrap truncate">{c.nombre}</div>
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-nowrap overflow-hidden whitespace-nowrap truncate">
+                                    <span className="hidden md:inline text-[11px] text-slate-500 whitespace-nowrap truncate">{c.telefono}</span>
+                                    <span className="font-mono text-[9px] text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded font-bold border border-blue-200/60 whitespace-nowrap shrink-0">
                                       {c.numeroCuenta || generarNumeroCuentaCliente(c.id)}
                                     </span>
                                   </div>
@@ -1767,21 +1834,51 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* Nivel Inferior: Días de pago a la izq; Botón WhatsApp a la der */}
+                            {/* Nivel Inferior: Días de pago a la izq; Botones Llamar y WhatsApp a la der */}
                             <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
                               <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg">
                                 Días: {c.diasPago}
                               </span>
-                              <WhatsAppIconButton
-                                cliente={c}
-                                nombreColmado={datosColmado.nombre}
-                                pagaHoy={true}
-                                size="sm"
-                                onOpenModal={(cli) => {
-                                  vibrate(15);
-                                  setWhatsAppModalCliente(cli as ClienteCalculado);
-                                }}
-                              />
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {c.telefono && (
+                                  <a
+                                    href={`tel:${c.telefono}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      vibrate(10);
+                                    }}
+                                    className="w-7 h-7 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100 flex items-center justify-center transition shadow-2xs"
+                                    title={`Llamar al ${c.telefono}`}
+                                  >
+                                    <Phone className="w-3.5 h-3.5" />
+                                  </a>
+                                )}
+                                <WhatsAppIconButton
+                                  cliente={c}
+                                  nombreColmado={datosColmado.nombre}
+                                  pagaHoy={true}
+                                  size="sm"
+                                  onOpenModal={(cli) => {
+                                    vibrate(15);
+                                    setWhatsAppModalCliente(cli as ClienteCalculado);
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    vibrate(15);
+                                    const movs = store.getHistorialAdmin().filter(m => m.idCliente === c.id);
+                                    generarHistorialCompletoClientePDF(c, movs);
+                                    showToast('Historial en PDF', `Descargando historial detallado de ${c.nombre}...`, 'success');
+                                  }}
+                                  className="w-7 h-7 rounded-lg bg-amber-50 border border-amber-200/80 text-amber-700 hover:bg-amber-100 flex items-center justify-center transition shadow-2xs hover:scale-105 active:scale-95"
+                                  title={`Descargar historial detallado de ${c.nombre} en PDF`}
+                                  aria-label="Descargar historial en PDF"
+                                >
+                                  <FileText className="w-3.5 h-3.5 text-amber-600" />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -1914,7 +2011,7 @@ export default function App() {
                           >
                             {/* Nivel Superior: Avatar, Nombre/Tel a la izq; Balance a la der */}
                             <div className="flex items-start justify-between gap-2.5">
-                              <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
                                 <div className={`w-10 h-10 rounded-xl font-bold flex items-center justify-center shrink-0 ${
                                   pagaHoy && c.saldo > 0
                                     ? 'bg-red-600 text-white shadow-sm'
@@ -1922,11 +2019,13 @@ export default function App() {
                                 }`}>
                                   {c.nombre.charAt(0).toUpperCase()}
                                 </div>
-                                <div className="min-w-0">
-                                  <div className="font-bold text-xs sm:text-sm text-slate-900 truncate">{c.nombre}</div>
-                                  <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                                    <span className="text-[11px] text-slate-500 truncate">{c.telefono}</span>
-                                    <span className="font-mono text-[9px] text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded font-bold border border-blue-200/60">
+                                <div className="min-w-0 flex-1 flex flex-col gap-1 overflow-hidden">
+                                  <div className="min-w-0 w-full whitespace-nowrap truncate">
+                                    <div className="font-bold text-xs sm:text-sm text-slate-900 whitespace-nowrap truncate">{c.nombre}</div>
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-nowrap overflow-hidden whitespace-nowrap truncate">
+                                    <span className="hidden md:inline text-[11px] text-slate-500 whitespace-nowrap truncate">{c.telefono}</span>
+                                    <span className="font-mono text-[9px] text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded font-bold border border-blue-200/60 whitespace-nowrap shrink-0">
                                       {c.numeroCuenta || generarNumeroCuentaCliente(c.id)}
                                     </span>
                                   </div>
@@ -2143,12 +2242,14 @@ export default function App() {
                               }`}>
                                 {c.nombre.charAt(0).toUpperCase()}
                               </div>
-                              <div className="min-w-0 flex-1 whitespace-nowrap truncate">
-                                <h4 className="font-extrabold text-sm sm:text-base text-slate-900 leading-tight whitespace-nowrap truncate">
-                                  {c.nombre}
-                                </h4>
-                                <div className="flex items-center gap-2 flex-nowrap mt-0.5 overflow-hidden whitespace-nowrap">
-                                  <p className="text-xs text-slate-500 font-medium flex items-center gap-1 shrink-0 whitespace-nowrap truncate">
+                              <div className="min-w-0 flex-1 flex flex-col gap-1 overflow-hidden">
+                                <div className="min-w-0 w-full whitespace-nowrap truncate">
+                                  <h4 className="font-extrabold text-sm sm:text-base text-slate-900 leading-tight whitespace-nowrap truncate">
+                                    {c.nombre}
+                                  </h4>
+                                </div>
+                                <div className="flex items-center gap-2 flex-nowrap overflow-hidden whitespace-nowrap truncate">
+                                  <p className="hidden md:flex text-xs text-slate-500 font-medium items-center gap-1 shrink-0 whitespace-nowrap truncate">
                                     <Phone className="w-3 h-3 text-slate-400 shrink-0" />
                                     <span className="whitespace-nowrap truncate">{c.telefono}</span>
                                   </p>
@@ -2172,7 +2273,7 @@ export default function App() {
                           {/* Nivel Inferior: Límite acordado y etiquetas a la izquierda; botones de acción rápida a la derecha */}
                           <div className="flex items-center justify-between gap-2 pt-2.5 border-t border-slate-100">
                             <div className="flex items-center gap-2 min-w-0 flex-nowrap overflow-x-auto no-scrollbar py-0.5 whitespace-nowrap">
-                              <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg shrink-0 whitespace-nowrap">
+                              <span className="hidden md:inline-block text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg shrink-0 whitespace-nowrap">
                                 Lím: {formatoMoneda(c.limite)}
                               </span>
                               {pagaHoy && c.saldo > 0 && (
@@ -2200,7 +2301,20 @@ export default function App() {
                               )}
                             </div>
 
-                            <div className="flex items-center gap-2 shrink-0 whitespace-nowrap">
+                            <div className="flex items-center gap-3 md:gap-2 shrink-0 whitespace-nowrap">
+                              {c.telefono && (
+                                <a
+                                  href={`tel:${c.telefono}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    vibrate(10);
+                                  }}
+                                  className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100 flex items-center justify-center transition shadow-2xs"
+                                  title={`Llamar al ${c.telefono}`}
+                                >
+                                  <Phone className="w-3.5 h-3.5" />
+                                </a>
+                              )}
                               {c.saldo > 0 && (
                                 <WhatsAppIconButton
                                   cliente={c}
@@ -2213,6 +2327,24 @@ export default function App() {
                                   }}
                                 />
                               )}
+
+                              {/* Botón pequeño para generar y descargar PDF con historial detallado de este cliente */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  vibrate(15);
+                                  const movs = store.getHistorialAdmin().filter(m => m.idCliente === c.id);
+                                  generarHistorialCompletoClientePDF(c, movs);
+                                  showToast('Historial en PDF', `Descargando historial detallado de ${c.nombre}...`, 'success');
+                                }}
+                                className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-700 hover:bg-amber-100 flex items-center justify-center transition shadow-2xs hover:scale-105 active:scale-95"
+                                title={`Descargar historial detallado de ${c.nombre} en PDF`}
+                                aria-label="Descargar historial en PDF"
+                              >
+                                <FileText className="w-3.5 h-3.5 text-amber-600" />
+                              </button>
+
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -2243,8 +2375,8 @@ export default function App() {
                                 <QrCode className="w-3.5 h-3.5" />
                               </button>
 
-                              <div className="w-6 h-6 flex items-center justify-center text-slate-300">
-                                <ChevronRight className="w-4 h-4" />
+                              <div className="w-8 h-8 md:w-6 md:h-6 flex items-center justify-center text-slate-300">
+                                <ChevronRight className="w-3.5 h-3.5 md:w-4 md:h-4" />
                               </div>
                             </div>
                           </div>
@@ -2582,13 +2714,6 @@ export default function App() {
                     {/* Metrics */}
                     <div className="divide-y divide-slate-100 text-xs">
                       <div className="flex justify-between items-center py-2.5">
-                        <span className="text-slate-500 font-bold uppercase tracking-wider">No. de Cuenta</span>
-                        <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200/80">
-                          {selectedClientDetail.numeroCuenta || generarNumeroCuentaCliente(selectedClientDetail.id)}
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between items-center py-2.5">
                         <span className="text-slate-500 font-bold uppercase tracking-wider">Deuda Pendiente</span>
                         <span className="text-xl font-black text-red-600">{formatoMoneda(selectedClientDetail.saldo)}</span>
                       </div>
@@ -2770,62 +2895,261 @@ export default function App() {
                 </div>
 
                 {/* ======================================================== */}
-                {/* COLUMNA CENTRAL: lg:col-span-8 xl:col-span-5 */}
+                {/* COLUMNA PRINCIPAL DERECHA: lg:col-span-8 xl:col-span-9 */}
                 {/* ======================================================== */}
-                <div className="lg:col-span-8 xl:col-span-5 space-y-4">
-                  {/* Direct Actions */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      onClick={() => {
-                        setFormFiadoCliente(String(selectedClientDetail.id));
-                        setCurrentView('admin-fiado');
-                      }}
-                      className="py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl text-xs flex items-center justify-center gap-2 shadow-sm transition active:scale-95"
-                    >
-                      <PlusCircle className="w-4 h-4" />
-                      Registrar Fiado
-                    </button>
-                    <button
-                      onClick={() => {
-                        setFormAbonoCliente(String(selectedClientDetail.id));
-                        setCurrentView('admin-abono');
-                      }}
-                      className="py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs flex items-center justify-center gap-2 shadow-sm transition active:scale-95"
-                    >
-                      <ArrowDownLeft className="w-4 h-4" />
-                      Registrar Abono
-                    </button>
+                <div className="lg:col-span-8 xl:col-span-9 space-y-6">
+                  {/* Fila Superior: 2 Columnas (Acciones + Abonos vs Autorizados + Resumen) */}
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+                    
+                    {/* Subcolumna 1: Acciones directas (Llamar / WhatsApp), PDF y Abonos */}
+                    <div className="xl:col-span-7 space-y-4">
+                      {/* Botones de Contacto Directo: Llamar al [teléfono] & Enviar WhatsApp */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <a
+                          href={`tel:${selectedClientDetail.telefono}`}
+                          className="py-3.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition active:scale-95"
+                        >
+                          <Phone className="w-4 h-4" />
+                          <span>Llamar al {selectedClientDetail.telefono}</span>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            vibrate(15);
+                            setWhatsAppModalCliente(selectedClientDetail);
+                          }}
+                          className="py-3.5 px-4 bg-[#25D366] hover:bg-[#20ba59] text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition active:scale-95"
+                        >
+                          <WhatsAppIcon className="w-4 h-4" />
+                          <span>Enviar WhatsApp</span>
+                        </button>
+                      </div>
+
+                      {/* Botones de Descarga PDF: Historial Completo & Gastos de la Quincena */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <button
+                          onClick={() => {
+                            vibrate(15);
+                            generarHistorialCompletoClientePDF(selectedClientDetail, selectedClientHistory);
+                            showToast('Historial en PDF', `Descargando historial detallado de ${selectedClientDetail.nombre}...`, 'success');
+                          }}
+                          className="w-full py-3.5 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-md transition active:scale-98"
+                        >
+                          <FileText className="w-4 h-4 text-blue-200" />
+                          Historial Detallado (PDF)
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            vibrate(15);
+                            generarGastosQuincenaPDF(selectedClientHistory, {
+                              nombreCliente: selectedClientDetail.nombre,
+                              telefonoCliente: selectedClientDetail.telefono
+                            });
+                            showToast('PDF Quincena', `Descargando gastos de la quincena de ${selectedClientDetail.nombre}...`, 'success');
+                          }}
+                          className="w-full py-3.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-md transition active:scale-98"
+                        >
+                          <FileText className="w-4 h-4 text-yellow-200" />
+                          Gastos Quincena (PDF)
+                        </button>
+                      </div>
+
+                      {/* Sección dedicada: Tabla completa de Historial de Abonos */}
+                      <ClientAbonosTable
+                        movimientos={selectedClientHistory}
+                        clienteNombre={selectedClientDetail.nombre}
+                        clienteTelefono={selectedClientDetail.telefono}
+                        onSelectAbono={(abono) => setActiveReceipt(abono)}
+                      />
+
+                      {/* Acceso a Autorizados en pantallas menores a XL */}
+                      <div className="xl:hidden bg-white rounded-3xl p-4 border border-slate-100 shadow-xs">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <UserCheck className="w-4 h-4 text-purple-600" />
+                            <h4 className="font-bold text-xs uppercase tracking-wide text-slate-800">
+                              Personas Autorizadas
+                            </h4>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setAuthModal({
+                                isOpen: true,
+                                modo: 'agregar',
+                                autorizado: null,
+                                targetClienteId: selectedClientDetail.id,
+                                esCliente: false
+                              });
+                            }}
+                            className="py-1 px-2.5 bg-purple-50 text-purple-700 hover:bg-purple-100 rounded-lg text-xs font-bold transition"
+                          >
+                            + Agregar
+                          </button>
+                        </div>
+
+                        <div className="space-y-2">
+                          {store.getAutorizadosDeCliente(selectedClientDetail.id).length === 0 ? (
+                            <div className="text-center py-3 text-xs text-slate-400">
+                              Solo el titular está autorizado para fiar
+                            </div>
+                          ) : (
+                            store.getAutorizadosDeCliente(selectedClientDetail.id).map(a => (
+                              <div key={a.id} className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl text-xs">
+                                <div>
+                                  <div className="font-bold text-slate-800">{a.nombre}</div>
+                                  <div className="text-[10px] text-slate-400 capitalize">{a.parentesco}</div>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => setAuthModal({ isOpen: true, modo: 'editar', autorizado: a, targetClienteId: selectedClientDetail.id, esCliente: false })}
+                                    className="p-1 text-slate-400 hover:text-blue-600"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => setDeleteAuthModal({ autorizado: a, targetClienteId: selectedClientDetail.id, esCliente: false })}
+                                    className="p-1 text-slate-400 hover:text-red-600"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Subcolumna 2: Personas Autorizadas y Resumen de Cuenta */}
+                    <div className="hidden xl:block xl:col-span-5 space-y-4">
+                      {/* Tarjeta de Personas Autorizadas */}
+                      <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-md">
+                        <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+                              <UserCheck className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-black text-sm text-slate-900 leading-tight">Personas Autorizadas</h4>
+                              <p className="text-[10px] text-slate-400">Familiares con permiso para fiar</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setAuthModal({
+                                isOpen: true,
+                                modo: 'agregar',
+                                autorizado: null,
+                                targetClienteId: selectedClientDetail.id,
+                                esCliente: false
+                              });
+                            }}
+                            className="py-1.5 px-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-2xs"
+                          >
+                            + Agregar
+                          </button>
+                        </div>
+
+                        <div className="space-y-2 mt-3">
+                          {store.getAutorizadosDeCliente(selectedClientDetail.id).length === 0 ? (
+                            <div className="text-center py-6 text-slate-400 bg-slate-50 rounded-2xl p-4">
+                              <UserCheck className="w-8 h-8 mx-auto text-slate-300 mb-1" />
+                              <p className="text-xs font-bold">Sin familiares autorizados</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">Solo el titular puede retirar mercancía</p>
+                            </div>
+                          ) : (
+                            store.getAutorizadosDeCliente(selectedClientDetail.id).map(a => (
+                              <div
+                                key={a.id}
+                                className="flex items-center justify-between p-3 bg-slate-50 hover:bg-purple-50/50 rounded-2xl border border-slate-100 transition"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 font-bold text-xs flex items-center justify-center shrink-0">
+                                    {a.nombre.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-xs text-slate-900 truncate">{a.nombre}</div>
+                                    <div className="text-[10px] text-slate-400 capitalize">{a.parentesco}</div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={() => setAuthModal({ isOpen: true, modo: 'editar', autorizado: a, targetClienteId: selectedClientDetail.id, esCliente: false })}
+                                    className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-white transition"
+                                    title="Editar"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => setDeleteAuthModal({ autorizado: a, targetClienteId: selectedClientDetail.id, esCliente: false })}
+                                    className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-white transition"
+                                    title="Eliminar"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Resumen Comercial del Cliente */}
+                      <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-md">
+                        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-100">
+                          <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                            <ShoppingBag className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="font-black text-sm text-slate-900 leading-tight">Resumen de Cuenta</h4>
+                            <p className="text-[10px] text-slate-400">Comportamiento de pagos</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2.5 text-xs">
+                          <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
+                            <span className="text-slate-500">Total fiados registrados</span>
+                            <span className="font-black text-slate-900">
+                              {selectedClientHistory.filter(m => m.tipo === 'Fiado').length} compras
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
+                            <span className="text-slate-500">Total abonos efectuados</span>
+                            <span className="font-black text-emerald-700">
+                              {selectedClientHistory.filter(m => m.tipo === 'Abono').length} pagos
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
+                            <span className="text-slate-500">Monto total fiado histórico</span>
+                            <span className="font-black text-slate-900">
+                              {formatoMoneda(
+                                selectedClientHistory
+                                  .filter(m => m.tipo === 'Fiado')
+                                  .reduce((acc, m) => acc + m.monto, 0)
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center py-1.5">
+                            <span className="text-slate-500">Monto total abonado histórico</span>
+                            <span className="font-black text-emerald-600">
+                              {formatoMoneda(
+                                selectedClientHistory
+                                  .filter(m => m.tipo === 'Abono')
+                                  .reduce((acc, m) => acc + m.monto, 0)
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Botón Descargar Gastos de la Quincena en PDF */}
-                  <button
-                    onClick={() => {
-                      vibrate(15);
-                      generarGastosQuincenaPDF(selectedClientHistory, {
-                        nombreCliente: selectedClientDetail.nombre,
-                        telefonoCliente: selectedClientDetail.telefono
-                      });
-                      showToast('PDF Quincena', `Descargando gastos de la quincena de ${selectedClientDetail.nombre}...`, 'success');
-                    }}
-                    className="w-full py-3.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-md transition active:scale-98"
-                  >
-                    <FileText className="w-4 h-4 text-yellow-200" />
-                    Descargar Gastos de la Quincena (PDF)
-                  </button>
-
-                  {/* Sección dedicada: Tabla completa de Historial de Abonos */}
-                  <ClientAbonosTable
-                    movimientos={selectedClientHistory}
-                    clienteNombre={selectedClientDetail.nombre}
-                    clienteTelefono={selectedClientDetail.telefono}
-                    onSelectAbono={(abono) => setActiveReceipt(abono)}
-                  />
-
-                  {/* Client History */}
-                  <div className="bg-white rounded-3xl p-4 border border-slate-100 shadow-xs">
+                  {/* Fila Inferior AMPLIADA: Movimientos de este cliente a Ancho Completo */}
+                  <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-xs w-full">
                     <div className="flex flex-col gap-2.5 mb-3">
                       <div className="flex items-center justify-between flex-wrap gap-2">
-                        <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wide flex items-center gap-1.5">
+                        <h4 className="font-bold text-slate-800 text-xs sm:text-sm uppercase tracking-wide flex items-center gap-1.5">
                           <Clock className="w-4 h-4 text-blue-600" />
                           <span>Movimientos de este cliente</span>
                         </h4>
@@ -2838,14 +3162,14 @@ export default function App() {
                               setVistaTablaMovimientos(false);
                               localStorage.setItem('colmado_vista_tabla_movimientos', 'false');
                             }}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
                               !vistaTablaMovimientos
                                 ? 'bg-white text-slate-800 shadow-2xs font-extrabold'
                                 : 'text-slate-500 hover:text-slate-700'
                             }`}
                             title="Vista en Tarjetas"
                           >
-                            <Clock className="w-3 h-3 text-blue-600" />
+                            <Clock className="w-3.5 h-3.5 text-blue-600" />
                             <span>Tarjetas</span>
                           </button>
 
@@ -2855,22 +3179,43 @@ export default function App() {
                               setVistaTablaMovimientos(true);
                               localStorage.setItem('colmado_vista_tabla_movimientos', 'true');
                             }}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
                               vistaTablaMovimientos
                                 ? 'bg-emerald-600 text-white shadow-2xs font-extrabold'
                                 : 'text-slate-500 hover:text-slate-700'
                             }`}
                             title="Vista en Hoja de Cálculo"
                           >
-                            <FileSpreadsheet className="w-3 h-3" />
+                            <FileSpreadsheet className="w-3.5 h-3.5" />
                             <span>Hoja de Cálculo</span>
                           </button>
                         </div>
                       </div>
 
                       <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-2xl border border-slate-100 text-xs flex-wrap gap-2">
-                        <span className="font-bold text-slate-600">Fecha de corte:</span>
                         <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-slate-600">Mes:</span>
+                          <select
+                            value={selectedClientMesFiltro}
+                            onChange={e => setSelectedClientMesFiltro(e.target.value)}
+                            className="bg-white border border-slate-200 rounded-xl px-2.5 py-1 font-bold text-xs text-slate-800 focus:outline-hidden focus:border-blue-600"
+                          >
+                            <option value="">Todos los meses</option>
+                            {mesesDisponiblesMovimientos.map(ym => (
+                              <option key={ym} value={ym}>{formatearMesAnioMov(ym)}</option>
+                            ))}
+                          </select>
+                          {selectedClientMesFiltro && (
+                            <button
+                              onClick={() => setSelectedClientMesFiltro('')}
+                              className="text-[10px] text-blue-600 font-bold hover:underline"
+                            >
+                              Limpiar
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-slate-600">Fecha de corte:</span>
                           <input
                             type="date"
                             value={selectedClientDateFiltro}
@@ -2891,17 +3236,17 @@ export default function App() {
 
                     {vistaTablaMovimientos ? (
                       <ClientMovementsSpreadsheet
-                        movimientos={selectedClientHistory}
+                        movimientos={selectedClientHistoryFiltrada}
                         fechaCorteFiltro={selectedClientDateFiltro}
                         onSelectMovimiento={(m) => setActiveReceipt(m)}
                         saldoActual={selectedClientDetail.saldo}
                       />
                     ) : (
-                      <div className="divide-y divide-slate-100">
-                        {selectedClientHistory.length === 0 ? (
-                          <div className="py-6 text-center text-slate-400 text-xs">Sin movimientos</div>
+                      <div className="divide-y divide-slate-100 max-h-[65vh] overflow-y-auto pr-1">
+                        {selectedClientHistoryFiltrada.length === 0 ? (
+                          <div className="py-8 text-center text-slate-400 text-xs">Sin movimientos registrados</div>
                         ) : (
-                          selectedClientHistory.map(m => {
+                          selectedClientHistoryFiltrada.map(m => {
                             const esFiado = m.tipo === 'Fiado';
                             const esPagado = esFiado && m.pagado;
                             const isAnterior = selectedClientDateFiltro ? m.fechaHora.slice(0, 10) < selectedClientDateFiltro : false;
@@ -2942,7 +3287,7 @@ export default function App() {
                                   </div>
                                 </div>
                                 <div className="text-right">
-                                  <div className={`font-black text-xs ${isAnterior ? 'text-slate-400 line-through' : esPagado ? 'text-emerald-600' : esFiado ? 'text-red-600' : 'text-emerald-600'}`}>
+                                  <div className={`font-black text-xs sm:text-sm ${isAnterior ? 'text-slate-400 line-through' : esPagado ? 'text-emerald-600' : esFiado ? 'text-red-600' : 'text-emerald-600'}`}>
                                     {esFiado ? '-' : '+'}{formatoMoneda(m.monto)}
                                     {esPagado && <div className="text-[9px] text-emerald-600 font-bold not-italic">Pagado</div>}
                                     {esFiado && !esPagado && (m.montoPagado || 0) > 0 && (
@@ -2956,222 +3301,6 @@ export default function App() {
                         )}
                       </div>
                     )}
-                  </div>
-
-                  {/* Acceso a Autorizados en pantallas menores a XL */}
-                  <div className="xl:hidden bg-white rounded-3xl p-4 border border-slate-100 shadow-xs">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <UserCheck className="w-4 h-4 text-purple-600" />
-                        <h4 className="font-bold text-xs uppercase tracking-wide text-slate-800">
-                          Personas Autorizadas
-                        </h4>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          vibrate(10);
-                          setAuthModal({
-                            isOpen: true,
-                            modo: 'agregar',
-                            autorizado: null,
-                            targetClienteId: selectedClientDetail.id,
-                            esCliente: false
-                          });
-                        }}
-                        className="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white py-2 px-4 rounded-xl font-bold transition shadow-sm hover:shadow-md shadow-blue-500/25 flex items-center gap-1.5 cursor-pointer touch-manipulation text-xs"
-                      >
-                        <UserPlus className="w-3.5 h-3.5 text-white" />
-                        <span>Agregar +</span>
-                      </button>
-                    </div>
-
-                    <div className="space-y-2">
-                      {store.getAutorizadosDeCliente(selectedClientDetail.id).length === 0 ? (
-                        <div className="text-center py-3 text-xs text-slate-400">
-                          Solo el titular está autorizado para fiar
-                        </div>
-                      ) : (
-                        store.getAutorizadosDeCliente(selectedClientDetail.id).map(a => (
-                          <div key={a.id} className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl text-xs">
-                            <div>
-                              <div className="font-bold text-slate-800">{a.nombre}</div>
-                              <div className="text-[10px] text-slate-400 capitalize">{a.parentesco}</div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => setAuthModal({ isOpen: true, modo: 'editar', autorizado: a, targetClienteId: selectedClientDetail.id, esCliente: false })}
-                                className="p-1 text-slate-400 hover:text-blue-600"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setDeleteAuthModal({ autorizado: a, targetClienteId: selectedClientDetail.id, esCliente: false })}
-                                className="p-1 text-slate-400 hover:text-red-600"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* ======================================================== */}
-                {/* COLUMNA DERECHA: hidden xl:block xl:col-span-4 */}
-                {/* ======================================================== */}
-                <div className="hidden xl:block xl:col-span-4 space-y-4">
-                  {/* Tarjeta de Personas Autorizadas */}
-                  <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-md">
-                    <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
-                          <UserCheck className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <h4 className="font-black text-sm text-slate-900 leading-tight">Personas Autorizadas</h4>
-                          <p className="text-[10px] text-slate-400">Familiares con permiso para fiar</p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setAuthModal({
-                            isOpen: true,
-                            modo: 'agregar',
-                            autorizado: null,
-                            targetClienteId: selectedClientDetail.id,
-                            esCliente: false
-                          });
-                        }}
-                        className="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white py-2 px-4 rounded-xl font-bold transition shadow-sm hover:shadow-md shadow-blue-500/25 flex items-center gap-1.5 cursor-pointer touch-manipulation text-xs"
-                      >
-                        <UserPlus className="w-3.5 h-3.5 text-white" />
-                        <span>Agregar +</span>
-                      </button>
-                    </div>
-
-                    <div className="space-y-2 mt-3">
-                      {store.getAutorizadosDeCliente(selectedClientDetail.id).length === 0 ? (
-                        <div className="text-center py-6 text-slate-400 bg-slate-50 rounded-2xl p-4">
-                          <UserCheck className="w-8 h-8 mx-auto text-slate-300 mb-1" />
-                          <p className="text-xs font-bold">Sin familiares autorizados</p>
-                          <p className="text-[10px] text-slate-400 mt-0.5">Solo el titular puede retirar mercancía</p>
-                        </div>
-                      ) : (
-                        store.getAutorizadosDeCliente(selectedClientDetail.id).map(a => (
-                          <div
-                            key={a.id}
-                            className="flex items-center justify-between p-3 bg-slate-50 hover:bg-purple-50/50 rounded-2xl border border-slate-100 transition"
-                          >
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 font-bold text-xs flex items-center justify-center shrink-0">
-                                {a.nombre.charAt(0).toUpperCase()}
-                              </div>
-                              <div className="min-w-0">
-                                <div className="font-bold text-xs text-slate-900 truncate">{a.nombre}</div>
-                                <div className="text-[10px] text-slate-400 capitalize">{a.parentesco}</div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                onClick={() => setAuthModal({ isOpen: true, modo: 'editar', autorizado: a, targetClienteId: selectedClientDetail.id, esCliente: false })}
-                                className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-white transition"
-                                title="Editar"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setDeleteAuthModal({ autorizado: a, targetClienteId: selectedClientDetail.id, esCliente: false })}
-                                className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-white transition"
-                                title="Eliminar"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Resumen Comercial del Cliente */}
-                  <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-md">
-                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-100">
-                      <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-                        <ShoppingBag className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="font-black text-sm text-slate-900 leading-tight">Resumen de Cuenta</h4>
-                        <p className="text-[10px] text-slate-400">Comportamiento de pagos</p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2.5 text-xs">
-                      <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                        <span className="text-slate-500">Total fiados registrados</span>
-                        <span className="font-black text-slate-900">
-                          {selectedClientHistory.filter(m => m.tipo === 'Fiado').length} compras
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                        <span className="text-slate-500">Total abonos efectuados</span>
-                        <span className="font-black text-emerald-700">
-                          {selectedClientHistory.filter(m => m.tipo === 'Abono').length} pagos
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                        <span className="text-slate-500">Monto total fiado histórico</span>
-                        <span className="font-black text-slate-900">
-                          {formatoMoneda(
-                            selectedClientHistory
-                              .filter(m => m.tipo === 'Fiado')
-                              .reduce((acc, m) => acc + m.monto, 0)
-                          )}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center py-1.5">
-                        <span className="text-slate-500">Monto total abonado histórico</span>
-                        <span className="font-black text-emerald-600">
-                          {formatoMoneda(
-                            selectedClientHistory
-                              .filter(m => m.tipo === 'Abono')
-                              .reduce((acc, m) => acc + m.monto, 0)
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Atajos Rápidos */}
-                  <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-3xl p-5 shadow-lg">
-                    <h4 className="font-black text-xs uppercase tracking-wider text-blue-400 mb-2">
-                      Atajos de Gestión
-                    </h4>
-                    <p className="text-xs text-slate-300 leading-relaxed mb-4">
-                      Comunícate con {selectedClientDetail.nombre.split(' ')[0]} o imprime el estado de cuenta quincenal.
-                    </p>
-                    <div className="space-y-2">
-                      <a
-                        href={`tel:${selectedClientDetail.telefono}`}
-                        className="w-full py-2.5 px-3 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition"
-                      >
-                        <Phone className="w-3.5 h-3.5 text-emerald-400" />
-                        Llamar al {selectedClientDetail.telefono}
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          vibrate(15);
-                          setWhatsAppModalCliente(selectedClientDetail);
-                        }}
-                        className="w-full py-2.5 px-3 bg-[#25D366] hover:bg-[#20ba59] text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition shadow-xs"
-                      >
-                        <WhatsAppIcon className="w-3.5 h-3.5" />
-                        Enviar WhatsApp
-                      </button>
-                    </div>
                   </div>
                 </div>
 
@@ -3486,8 +3615,25 @@ export default function App() {
                                     type="checkbox"
                                     checked={isChecked}
                                     onChange={e => {
-                                      if (e.target.checked) setSelectedFiadosPagados([...selectedFiadosPagados, f.idMov]);
-                                      else setSelectedFiadosPagados(selectedFiadosPagados.filter(id => id !== f.idMov));
+                                      vibrate(10);
+                                      if (e.target.checked) {
+                                        const saldoMax = abonoClienteSeleccionado ? abonoClienteSeleccionado.saldo : Infinity;
+                                        const nuevaSuma = totalSumaFiadosSeleccionados + deudaActual;
+                                        if (nuevaSuma > saldoMax + 0.01) {
+                                          showToast('Límite del saldo', `No puedes seleccionar más del saldo pendiente total (${formatoMoneda(saldoMax)})`, 'warning');
+                                          return;
+                                        }
+                                        const nuevosSeleccionados = [...selectedFiadosPagados, f.idMov];
+                                        setSelectedFiadosPagados(nuevosSeleccionados);
+                                        setFormAbonoMonto(nuevaSuma.toString());
+                                      } else {
+                                        const nuevosSeleccionados = selectedFiadosPagados.filter(id => id !== f.idMov);
+                                        setSelectedFiadosPagados(nuevosSeleccionados);
+                                        const nuevaSuma = fiadosPendientesAbono
+                                          .filter(item => nuevosSeleccionados.includes(item.idMov))
+                                          .reduce((acc, item) => acc + (typeof item.saldoPendiente === 'number' ? item.saldoPendiente : item.monto), 0);
+                                        setFormAbonoMonto(nuevaSuma > 0 ? nuevaSuma.toString() : '');
+                                      }
                                     }}
                                     className="w-4 h-4 rounded text-emerald-600 border-slate-300 shrink-0"
                                   />
@@ -3912,7 +4058,6 @@ export default function App() {
             initialRole="client"
             onAdminLogin={handleAdminLogin}
             onClientLogin={handleClientLogin}
-            onBackToLanding={() => { vibrate(10); setCurrentView('landing'); }}
             onOpenApkGuide={() => { vibrate(10); setIsApkGuideOpen(true); }}
             datosColmado={datosColmado}
             adminEmail={adminEmail}
@@ -3928,7 +4073,6 @@ export default function App() {
             clientRemember={clientRemember}
             setClientRemember={setClientRemember}
             isSubmitting={isSubmitting}
-            clientesDemo={adminClientes}
             onRoleChanged={(r) => {
               setCurrentView(r === 'client' ? 'client-login' : 'admin-login');
             }}
@@ -3939,10 +4083,84 @@ export default function App() {
         {/* 11. CLIENT DASHBOARD (Completamente Responsivo) */}
         {/* ======================================================== */}
         {currentView === 'client-dashboard' && currentClient && (
-          <div className="flex-1 flex flex-col bg-[#f8fafc] min-h-[100dvh] w-full max-w-5xl lg:max-w-6xl mx-auto sm:my-6 sm:rounded-3xl sm:shadow-2xl sm:border sm:border-slate-100 relative pb-28 md:pb-12">
+          <div className="flex-1 flex flex-col lg:flex-row bg-[#f8fafc] h-[100dvh] sm:h-[calc(100dvh-3rem)] lg:h-screen w-full max-w-5xl lg:max-w-6xl mx-auto sm:my-6 sm:rounded-3xl sm:shadow-2xl sm:border sm:border-slate-100 relative overflow-hidden lg:max-w-none lg:mx-0 lg:my-0 lg:rounded-none lg:border-0 lg:shadow-none">
             
             {/* Header del Cliente — Con navegación en Tablet y Desktop (≥ 768px) */}
-            <header className="bg-white px-4 sm:px-6 py-3.5 border-b border-slate-100 flex items-center justify-between sticky top-0 z-30 shadow-xs sm:rounded-t-3xl">
+            {/* Sidebar fijo (solo desktop, lg+) */}
+            <aside className="hidden lg:flex lg:flex-col lg:w-64 bg-slate-900 border-r border-slate-800 shrink-0 select-none overflow-y-auto">
+              <div className="p-5 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-md shadow-blue-500/20 shrink-0">
+                    <Crown className="w-5 h-5 fill-white text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-black text-white text-sm leading-tight truncate">{currentClient.nombre.split(' ')[0]}</h3>
+                    <p className="text-blue-400 text-[10px] font-bold truncate">{datosColmado.nombre} · {etiquetaCliente}</p>
+                  </div>
+                </div>
+              </div>
+
+              <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+                <button
+                  onClick={() => { vibrate(); setClientTab('inicio'); }}
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                    clientTab === 'inicio' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+                  }`}
+                >
+                  <Home className="w-4 h-4" />
+                  <span>Inicio</span>
+                </button>
+
+                <button
+                  onClick={() => { vibrate(); setClientTab('movimientos'); }}
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                    clientTab === 'movimientos' || clientTab === 'historial' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+                  }`}
+                >
+                  <ListOrdered className="w-4 h-4" />
+                  <span>Historial</span>
+                </button>
+
+                <button
+                  onClick={() => { vibrate(); setClientTab('tarjeta'); }}
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                    clientTab === 'tarjeta' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+                  }`}
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>Mi Tarjeta</span>
+                </button>
+
+                <button
+                  onClick={() => { vibrate(); setClientTab('perfil'); }}
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
+                    clientTab === 'perfil' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+                  }`}
+                >
+                  <User className="w-4 h-4" />
+                  <span>Perfil</span>
+                </button>
+              </nav>
+
+              <div className="p-4 border-t border-slate-800 bg-slate-950/40 flex items-center justify-between">
+                <div className="min-w-0 pr-2">
+                  <div className="text-xs font-bold text-white truncate">{currentClient.nombre}</div>
+                  <div className="text-[10px] text-slate-400 truncate">{etiquetaCliente}</div>
+                </div>
+                <button
+                  onClick={() => { vibrate(); localStorage.removeItem('colmado_current_client_id'); setCurrentClient(null); setCurrentView('client-login'); showToast('Sesión Cerrada', '', 'info'); }}
+                  className="p-2 rounded-xl text-slate-400 hover:text-red-400 hover:bg-slate-800 transition"
+                  title="Cerrar Sesión"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            </aside>
+
+            {/* Columna de contenido (header + area scrolleable) */}
+            <div className="flex-1 flex flex-col min-w-0 min-h-0">
+
+            <header className="bg-white px-4 sm:px-6 py-3.5 border-b border-slate-100 flex items-center justify-between sticky top-0 z-30 shadow-xs sm:rounded-t-3xl lg:rounded-none">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-md shadow-blue-500/20 shrink-0">
                   <Crown className="w-6 h-6 fill-white text-white" />
@@ -3952,13 +4170,13 @@ export default function App() {
                     Hola, {currentClient.nombre.split(' ')[0]}
                   </h2>
                   <p className="text-xs font-semibold text-slate-400 truncate">
-                    {datosColmado.nombre} · Cliente VIP
+                    {datosColmado.nombre} · {etiquetaCliente}
                   </p>
                 </div>
               </div>
 
               {/* Navegación Desktop y Tablet integrada en el Header */}
-              <div className="hidden md:flex items-center gap-1 bg-slate-100/90 p-1 rounded-2xl border border-slate-200/80">
+              <div className="hidden md:flex lg:hidden items-center gap-1 bg-slate-100/90 p-1 rounded-2xl border border-slate-200/80">
                 <button
                   onClick={() => { vibrate(); setClientTab('inicio'); }}
                   className={`px-3.5 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1.5 ${
@@ -4019,11 +4237,11 @@ export default function App() {
                 <button
                   onClick={() => {
                     vibrate();
-                    setCurrentClient(null);
-                    setCurrentView('landing');
+                    localStorage.removeItem('colmado_current_client_id'); setCurrentClient(null);
+                    setCurrentView('client-login');
                     showToast('Sesión Cerrada', '', 'info');
                   }}
-                  className="hidden md:flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-xl transition"
+                  className="hidden md:flex lg:hidden items-center gap-1 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-xl transition"
                   title="Cerrar sesión"
                 >
                   <LogOut className="w-3.5 h-3.5" />
@@ -4031,6 +4249,9 @@ export default function App() {
                 </button>
               </div>
             </header>
+
+            {/* Contenido scrolleable */}
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pb-28 md:pb-12 lg:pb-6">
 
             {/* TAB 1: INICIO (IMAGE 1) — Adaptable a Móvil, Tablet y Desktop */}
             {clientTab === 'inicio' && (
@@ -4649,7 +4870,7 @@ export default function App() {
                         <User className="w-10 h-10 text-white" />
                       </div>
                       <h3 className="text-xl font-black text-slate-900">{currentClient.nombre}</h3>
-                      <p className="text-xs font-semibold text-slate-400 mt-0.5">Cliente VIP · {datosColmado.nombre}</p>
+                      <p className="text-xs font-semibold text-slate-400 mt-0.5">{etiquetaCliente} · {datosColmado.nombre}</p>
                     </div>
 
                     {/* INFORMACIÓN DE LA CUENTA */}
@@ -4772,8 +4993,8 @@ export default function App() {
                     <button
                       onClick={() => {
                         vibrate();
-                        setCurrentClient(null);
-                        setCurrentView('landing');
+                        localStorage.removeItem('colmado_current_client_id'); setCurrentClient(null);
+                        setCurrentView('client-login');
                         showToast('Sesión Cerrada', '', 'info');
                       }}
                       className="w-full py-4 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-2xl text-sm flex items-center justify-center gap-2 border border-red-200/60 transition active:scale-98"
@@ -4941,6 +5162,8 @@ export default function App() {
               </div>
             )}
 
+            </div>
+
             {/* Bottom Nav Client (solo móvil < 768px para evitar tapar la pantalla en desktop) */}
             <nav className="md:hidden fixed bottom-0 left-0 right-0 w-full bg-white/95 backdrop-blur-md border-t border-slate-200/80 px-2 py-2 flex items-center justify-around z-30 shadow-lg">
               <button
@@ -4987,6 +5210,7 @@ export default function App() {
                 <span>Perfil</span>
               </button>
             </nav>
+            </div>
           </div>
         )}
       </div>

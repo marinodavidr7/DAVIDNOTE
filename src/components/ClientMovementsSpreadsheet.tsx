@@ -45,11 +45,11 @@ export const ClientMovementsSpreadsheet: React.FC<ClientMovementsSpreadsheetProp
       </div>
 
       {/* Contenedor de la Tabla con scroll horizontal */}
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-2xs bg-white">
+      <div className="overflow-auto max-h-[60vh] rounded-2xl border border-slate-200 shadow-2xs bg-white">
         <table className="w-full text-left text-xs border-collapse font-sans min-w-[560px]">
           {/* Encabezado estilo Excel / Google Sheets */}
           <thead>
-            <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 font-black text-[10px] uppercase tracking-wider select-none">
+            <tr className="sticky top-0 z-10 bg-slate-100 border-b border-slate-200 text-slate-700 font-black text-[10px] uppercase tracking-wider select-none">
               <th className="py-2.5 px-3 border-r border-slate-200 text-center w-12 bg-slate-200/60">#</th>
               <th className="py-2.5 px-3 border-r border-slate-200">Fecha</th>
               <th className="py-2.5 px-3 border-r border-slate-200">Hora</th>

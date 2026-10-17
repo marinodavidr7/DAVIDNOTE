@@ -73,6 +73,7 @@ export const ColmadoSettingsModal: React.FC<ColmadoSettingsModalProps> = ({
       horario: '6:30 AM - 11:00 PM',
       diasAtencion: 'Lunes a Domingo',
       rnc: '131-98765-4',
+      etiquetaCliente: 'Cliente VIP',
       nota: '¡Gracias por su preferencia! Servicio a domicilio disponible.'
     };
     setFormData(defaultData);
@@ -170,6 +171,23 @@ export const ColmadoSettingsModal: React.FC<ColmadoSettingsModalProps> = ({
                     placeholder="Ej. Tu colmado de confianza"
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-white text-sm text-slate-900"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Etiqueta del Cliente (badge)
+                  </label>
+                  <input
+                    type="text"
+                    name="etiquetaCliente"
+                    value={formData.etiquetaCliente || ''}
+                    onChange={handleChange}
+                    placeholder="Ej. Cliente VIP"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-white text-sm text-slate-900"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Se muestra junto al nombre del cliente en su panel (ej. Cliente VIP, Cliente Oro).
+                  </p>
                 </div>
               </div>
 

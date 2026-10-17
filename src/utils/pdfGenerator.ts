@@ -1,4 +1,4 @@
-import jsPDF from 'jspdf';
+﻿import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Movimiento } from '../types';
 import { formatoMoneda, obtenerQuincenaActual } from './paymentCycle';
@@ -639,3 +639,258 @@ export function generarReporteAbonosClientePDF(
 }
 
 
+/**
+ * Genera y descarga un PDF con el historial detallado de un cliente específico:
+ * - Datos del Colmado y fecha de emisión
+ * - Perfil del cliente (nombre, teléfono, límite, balance actual, días de cobro, NFC)
+ * - Tarjetas de resumen financiero (Saldo Actual, Total Fiados, Total Abonos, Total Transacciones)
+ * - Tabla completa de movimientos (ID, Fecha/Hora, Tipo, Quién Realizó, Detalle, Estado, Monto)
+ */
+export function generarHistorialCompletoClientePDF(
+  cliente: any,
+  movimientos: Movimiento[]
+): void {
+  const datosColmado = store.getDatosColmado();
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4'
+  });
+
+  const fechaHoy = new Date().toLocaleDateString('es-DO', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  // Filtrar solo movimientos de este cliente y ordenar por fecha/ID descendente
+  const movsCliente = (movimientos || [])
+    .filter(m => m.idCliente === cliente.id)
+    .sort((a, b) => new Date(b.fechaHora).getTime() - new Date(a.fechaHora).getTime());
+
+  const totalFiados = movsCliente.filter(m => m.tipo === 'Fiado').reduce((acc, m) => acc + m.monto, 0);
+  const totalAbonos = movsCliente.filter(m => m.tipo === 'Abono').reduce((acc, m) => acc + m.monto, 0);
+  const saldoActual = Number(cliente.saldo || 0);
+
+  // Encabezado corporativo azul marino #1e3a8a
+  doc.setFillColor(30, 58, 138);
+  doc.rect(0, 0, 210, 36, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text(datosColmado.nombre.toUpperCase(), 14, 13);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(250, 204, 21); // Dorado
+  doc.text('ESTADO DE CUENTA E HISTORIAL DETALLADO DE CLIENTE', 14, 20);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(219, 234, 254);
+  doc.text(`${datosColmado.slogan} · Tel: ${datosColmado.telefono} · ${datosColmado.direccion.substring(0, 48)}`, 14, 26);
+  doc.text(`Fecha y hora de emisión: ${fechaHoy}`, 14, 31);
+
+  // Ficha del Cliente (tarjeta superior)
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(203, 213, 225);
+  doc.setLineWidth(0.4);
+  doc.roundedRect(14, 41, 182, 26, 2.5, 2.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(30, 41, 59);
+  doc.text(String(cliente.nombre || 'Cliente').toUpperCase(), 18, 48);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`Teléfono: ${cliente.telefono || 'No registrado'}`, 18, 54);
+  doc.text(`Días de Cobro Acordados: ${cliente.diasPago || '15, 30'}`, 18, 60);
+
+  // Límite y Estado a la derecha
+  doc.text(`Límite de Crédito: ${formatoMoneda(cliente.limite || 0)}`, 110, 48);
+  if (cliente.nfcUid) {
+    doc.text(`Tag NFC Vinculado: ${cliente.nfcUid}`, 110, 54);
+  }
+
+  // Badge Estado
+  const conDeuda = saldoActual > 0;
+  if (conDeuda) {
+    doc.setFillColor(254, 242, 242);
+    doc.roundedRect(110, 56, 56, 7, 1.5, 1.5, 'F');
+    doc.setTextColor(220, 38, 38);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.text('ESTADO: CON DEUDA PENDIENTE', 113, 61);
+  } else {
+    doc.setFillColor(236, 253, 245);
+    doc.roundedRect(110, 56, 48, 7, 1.5, 1.5, 'F');
+    doc.setTextColor(5, 150, 105);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.text('ESTADO: AL DÍA (SIN DEUDA)', 113, 61);
+  }
+
+  // Tarjetas Resumen Financiero
+  const startY = 71;
+  // Card 1: Balance Pendiente
+  doc.setFillColor(conDeuda ? 254 : 240, conDeuda ? 242 : 253, conDeuda ? 242 : 244);
+  doc.roundedRect(14, startY, 42, 18, 2, 2, 'F');
+  doc.setTextColor(conDeuda ? 220 : 5, conDeuda ? 38 : 150, conDeuda ? 38 : 105);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text('SALDO ACTUAL:', 18, startY + 5.5);
+  doc.setFontSize(11);
+  doc.text(formatoMoneda(saldoActual), 18, startY + 13);
+
+  // Card 2: Total Fiados
+  doc.setFillColor(241, 245, 249);
+  doc.roundedRect(60, startY, 42, 18, 2, 2, 'F');
+  doc.setTextColor(100, 116, 139);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text('TOTAL FIADOS HIST.:', 64, startY + 5.5);
+  doc.setTextColor(30, 41, 59);
+  doc.setFontSize(11);
+  doc.text(formatoMoneda(totalFiados), 64, startY + 13);
+
+  // Card 3: Total Abonos
+  doc.setFillColor(236, 253, 245);
+  doc.roundedRect(106, startY, 42, 18, 2, 2, 'F');
+  doc.setTextColor(5, 150, 105);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text('TOTAL ABONADO:', 110, startY + 5.5);
+  doc.setFontSize(11);
+  doc.text(formatoMoneda(totalAbonos), 110, startY + 13);
+
+  // Card 4: Total Transacciones
+  doc.setFillColor(239, 246, 255);
+  doc.roundedRect(152, startY, 44, 18, 2, 2, 'F');
+  doc.setTextColor(37, 99, 235);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text('TOTAL MOVIMIENTOS:', 156, startY + 5.5);
+  doc.setFontSize(11);
+  doc.text(`${movsCliente.length} registros`, 156, startY + 13);
+
+  // Tabla con autoTable
+  const tablaDatos = movsCliente.map(m => {
+    const esFiado = m.tipo === 'Fiado';
+    const quien = m.autorizadoNombre && m.autorizadoNombre !== '-'
+      ? `${m.autorizadoNombre} (${m.autorizadoParentesco || 'Aut.'})`
+      : 'Titular';
+    
+    let estadoTexto = '-';
+    if (esFiado) {
+      if (m.pagado) {
+        estadoTexto = 'Saldado (Pagado)';
+      } else if (m.saldoPendiente !== undefined && m.saldoPendiente < m.monto) {
+        estadoTexto = `Pend. ${formatoMoneda(m.saldoPendiente)}`;
+      } else {
+        estadoTexto = 'Pendiente';
+      }
+    } else {
+      estadoTexto = 'Aplicado';
+    }
+
+    const obsTexto = m.observaciones || (esFiado ? 'Compra a crédito' : 'Abono a cuenta');
+
+    return [
+      `#${m.idMov}`,
+      `${m.fechaTexto || ''}\n${m.hora || ''}`.trim() || new Date(m.fechaHora).toLocaleDateString('es-DO'),
+      m.tipo,
+      quien,
+      obsTexto,
+      estadoTexto,
+      `${esFiado ? '+' : '-'}${formatoMoneda(m.monto)}`
+    ];
+  });
+
+  autoTable(doc, {
+    startY: 94,
+    head: [['ID', 'Fecha / Hora', 'Tipo', 'Quién Realizó', 'Observaciones / Detalle', 'Estado', 'Monto']],
+    body: tablaDatos.length > 0 ? tablaDatos : [['-', '-', '-', 'Sin movimientos registrados', '-', '-', '-']],
+    theme: 'grid',
+    headStyles: {
+      fillColor: [30, 58, 138],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 8.5,
+      halign: 'left'
+    },
+    styles: {
+      fontSize: 8,
+      cellPadding: 2.5,
+      textColor: [30, 41, 59],
+      valign: 'middle'
+    },
+    columnStyles: {
+      0: { cellWidth: 14, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 26 },
+      2: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+      3: { cellWidth: 32 },
+      4: { cellWidth: 'auto' },
+      5: { cellWidth: 28, halign: 'center' },
+      6: { cellWidth: 26, halign: 'right', fontStyle: 'bold' }
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252]
+    },
+    didParseCell: (data) => {
+      if (data.section === 'body') {
+        const rowData = data.row.raw as string[];
+        const tipo = rowData && rowData[2];
+        if (data.column.index === 2) {
+          if (tipo === 'Fiado') data.cell.styles.textColor = [220, 38, 38];
+          if (tipo === 'Abono') data.cell.styles.textColor = [5, 150, 105];
+        }
+        if (data.column.index === 5) {
+          const estado = String(data.cell.raw || '');
+          if (estado.includes('Saldado') || estado.includes('Aplicado')) {
+            data.cell.styles.textColor = [5, 150, 105];
+            data.cell.styles.fontStyle = 'bold';
+          } else if (estado.includes('Pend')) {
+            data.cell.styles.textColor = [220, 38, 38];
+            data.cell.styles.fontStyle = 'bold';
+          }
+        }
+        if (data.column.index === 6) {
+          if (tipo === 'Fiado') data.cell.styles.textColor = [220, 38, 38];
+          if (tipo === 'Abono') data.cell.styles.textColor = [5, 150, 105];
+        }
+      }
+    },
+    foot: [
+      ['', '', '', '', 'SALDO PENDIENTE ACTUAL:', '', formatoMoneda(saldoActual)]
+    ],
+    footStyles: {
+      fillColor: [241, 245, 249],
+      textColor: conDeuda ? [220, 38, 38] : [5, 150, 105],
+      fontStyle: 'bold',
+      fontSize: 9,
+      halign: 'right'
+    }
+  });
+
+  // Footer con paginación
+  const totalPages = (doc as any).internal.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      `Página ${i} de ${totalPages} · Historial Detallado de Cliente · ${datosColmado.nombre} · Tel: ${datosColmado.telefono}`,
+      105,
+      290,
+      { align: 'center' }
+    );
+  }
+
+  const safeNombre = String(cliente.nombre || 'Cliente').replace(/[^a-zA-Z0-9]/g, '_');
+  doc.save(`Historial_Detallado_${safeNombre}_${new Date().toISOString().split('T')[0]}.pdf`);
+}

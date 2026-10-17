@@ -86,6 +86,7 @@ function getInitialDatosColmado(): DatosColmado {
     horario: '6:30 AM - 11:00 PM',
     diasAtencion: 'Lunes a Domingo',
     rnc: '131-98765-4',
+    etiquetaCliente: 'Cliente VIP',
     nota: '¡Gracias por su preferencia! Servicio a domicilio disponible.'
   };
 }
@@ -142,12 +143,19 @@ class StoreService {
   private saveOfflineQueue() {
     try {
       localStorage.setItem(STORAGE_KEY_PREFIX + 'offline_queue', JSON.stringify(this.offlineQueue));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('colmado_offline_queue_changed', { detail: { count: this.offlineQueue.length } }));
+      }
     } catch (e) {
       console.warn('Error saving offline queue:', e);
     }
   }
 
   public getOfflineQueueCount(): number {
+    return this.offlineQueue.length;
+  }
+
+  public getPendingOfflineCount(): number {
     return this.offlineQueue.length;
   }
 
